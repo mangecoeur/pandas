@@ -57,7 +57,7 @@ large data to thin clients.
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Hadley Wickham's `ggplot2 <http://ggplot2.org/>`__ is a foundational exploratory visualization package for the R language.
-Based on `"The Grammer of Graphics" <http://www.cs.uic.edu/~wilkinson/TheGrammarOfGraphics/GOG.html>`__ it
+Based on `"The Grammar of Graphics" <http://www.cs.uic.edu/~wilkinson/TheGrammarOfGraphics/GOG.html>`__ it
 provides a powerful, declarative and extremely general way to generate bespoke plots of any kind of data.
 It's really quite incredible. Various implementations to other languages are available,
 but a faithful implementation for python users has long been missing. Although still young
@@ -80,6 +80,10 @@ The `Vincent <https://github.com/wrobstory/vincent>`__ project leverages `Vega <
 (that in turn, leverages `d3 <http://d3js.org/>`__) to create plots . It has great support
 for pandas data objects.
 
+`Plotly <https://plot.ly/python>`__
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+`Plotly’s <https://plot.ly/>`__ `Python API <https://plot.ly/python/>`__ enables interactive figures and web shareability. Maps, 2D, 3D, and live-streaming graphs are rendered with WebGL and `D3.js <http://d3js.org/>`__. The library supports plotting directly from a pandas DataFrame and cloud-based collaboration. Users of `matplotlib, ggplot for Python, and Seaborn <https://plot.ly/python/matplotlib-to-plotly-tutorial/>`__ can convert figures into interactive web-based plots. Plots can be drawn in `IPython Notebooks <https://plot.ly/ipython-notebooks/>`__ , edited with R or MATLAB, modified in a GUI, or embedded in apps and dashboards. Plotly is free for unlimited sharing, and has `cloud <https://plot.ly/product/plans/>`__, `offline <https://plot.ly/python/offline/>`__, or `on-premise <https://plot.ly/product/enterprise/>`__ accounts for private use.
 
 .. _ecosystem.ide:
 
@@ -132,10 +136,28 @@ Pandas DataFrames with timeseries indexes.
 
 `pydatastream <https://github.com/vfilimonov/pydatastream>`_
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-PyDatastream is a Python interface to the 
+PyDatastream is a Python interface to the
 `Thomson Dataworks Enterprise (DWE/Datastream) <http://dataworks.thomson.com/Dataworks/Enterprise/1.0/>`__
-SOAP API to return indexed Pandas DataFrames or Panels with financial data. 
+SOAP API to return indexed Pandas DataFrames or Panels with financial data.
 This package requires valid credentials for this API (non free).
+
+`pandaSDMX <http://pandasdmx.readthedocs.org>`_
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+pandaSDMX is an extensible library to retrieve and acquire statistical data
+and metadata disseminated in
+`SDMX <http://www.sdmx.org>`_ 2.1. This standard is currently supported by
+the European statistics office (Eurostat)
+and the European Central Bank (ECB). Datasets may be returned as pandas Series
+or multi-indexed DataFrames.
+
+`fredapi <https://github.com/mortada/fredapi>`_
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+fredapi is a Python interface to the `Federal Reserve Economic Data (FRED) <http://research.stlouisfed.org/fred2/>`__
+provided by the Federal Reserve Bank of St. Louis. It works with both the FRED database and ALFRED database that
+contains point-in-time data (i.e. historic data revisions). fredapi provides a wrapper in python to the FRED
+HTTP API, and also provides several conveninent methods for parsing and analyzing point-in-time data from ALFRED.
+fredapi makes use of pandas and returns data in a Series or DataFrame. This module requires a FRED API key that
+you can obtain for free on the FRED website.
 
 
 .. _ecosystem.domain:
@@ -165,8 +187,16 @@ Out-of-core
 -------------
 
 `Blaze <http://blaze.pydata.org/>`__
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Blaze provides a standard API for doing computations with various
 in-memory and on-disk backends: NumPy, Pandas, SQLAlchemy, MongoDB, PyTables,
 PySpark.
+
+`Odo <http://odo.pydata.org>`__
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Odo provides a uniform API for moving data between different formats. It uses
+pandas own ``read_csv`` for CSV IO and leverages many existing packages such as
+PyTables, h5py, and pymongo to move data between non pandas formats. Its graph
+based approach is also extensible by end users for custom formats that may be
+too specific for the core of odo.

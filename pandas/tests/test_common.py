@@ -2,11 +2,11 @@
 import collections
 from datetime import datetime
 import re
-import sys
 
 import nose
-from nose.tools import assert_equal
+from nose.tools import assert_equal, assert_true
 import numpy as np
+import pandas as pd
 from pandas.tslib import iNaT, NaT
 from pandas import Series, DataFrame, date_range, DatetimeIndex, Timestamp, Float64Index
 from pandas import compat
@@ -41,6 +41,7 @@ def test_is_sequence():
 
     assert(not is_seq(A()))
 
+
 def test_get_callable_name():
     from functools import partial
     getname = com._get_callable_name
@@ -50,6 +51,7 @@ def test_get_callable_name():
     lambda_ = lambda x: x
     part1 = partial(fn)
     part2 = partial(part1)
+
     class somecall(object):
         def __call__(self):
             return x
@@ -60,6 +62,38 @@ def test_get_callable_name():
     assert getname(part2) == 'fn'
     assert getname(somecall()) == 'somecall'
     assert getname(1) is None
+
+#Issue 10859
+class TestABCClasses(tm.TestCase):
+    tuples = [[1, 2, 2], ['red', 'blue', 'red']]
+    multi_index = pd.MultiIndex.from_arrays(tuples, names=('number', 'color'))
+    datetime_index = pd.to_datetime(['2000/1/1', '2010/1/1'])
+    timedelta_index = pd.to_timedelta(np.arange(5), unit='s')
+    period_index = pd.period_range('2000/1/1', '2010/1/1/', freq='M')
+    categorical = pd.Categorical([1, 2, 3], categories=[2, 3, 1])
+    categorical_df = pd.DataFrame({"values": [1, 2, 3]}, index=categorical)
+    df = pd.DataFrame({'names': ['a', 'b', 'c']}, index=multi_index)
+    sparse_series = pd.Series([1, 2, 3]).to_sparse()
+    sparse_array = pd.SparseArray(np.random.randn(10))
+
+    def test_abc_types(self):
+        self.assertIsInstance(pd.Index(['a', 'b', 'c']), com.ABCIndex)
+        self.assertIsInstance(pd.Int64Index([1, 2, 3]), com.ABCInt64Index)
+        self.assertIsInstance(pd.Float64Index([1, 2, 3]), com.ABCFloat64Index)
+        self.assertIsInstance(self.multi_index, com.ABCMultiIndex)
+        self.assertIsInstance(self.datetime_index, com.ABCDatetimeIndex)
+        self.assertIsInstance(self.timedelta_index, com.ABCTimedeltaIndex)
+        self.assertIsInstance(self.period_index, com.ABCPeriodIndex)
+        self.assertIsInstance(self.categorical_df.index, com.ABCCategoricalIndex)
+        self.assertIsInstance(pd.Index(['a', 'b', 'c']), com.ABCIndexClass)
+        self.assertIsInstance(pd.Int64Index([1, 2, 3]), com.ABCIndexClass)
+        self.assertIsInstance(pd.Series([1, 2, 3]), com.ABCSeries)
+        self.assertIsInstance(self.df, com.ABCDataFrame)
+        self.assertIsInstance(self.df.to_panel(), com.ABCPanel)
+        self.assertIsInstance(self.sparse_series, com.ABCSparseSeries)
+        self.assertIsInstance(self.sparse_array, com.ABCSparseArray)
+        self.assertIsInstance(self.categorical, com.ABCCategorical)
+        self.assertIsInstance(pd.Period('2012', freq='A-DEC'), com.ABCPeriod)
 
 
 def test_notnull():
@@ -447,7 +481,7 @@ def test_is_hashable():
 
     # old-style classes in Python 2 don't appear hashable to
     # collections.Hashable but also seem to support hash() by default
-    if sys.version_info[0] == 2:
+    if compat.PY2:
         class OldStyleClass():
             pass
         c = OldStyleClass()
@@ -523,6 +557,47 @@ def test_is_recompilable():
 
     for f in fails:
         assert not com.is_re_compilable(f)
+
+def test_random_state():
+    import numpy.random as npr
+    # Check with seed
+    state = com._random_state(5)
+    assert_equal(state.uniform(), npr.RandomState(5).uniform())
+
+    # Check with random state object
+    state2 = npr.RandomState(10)
+    assert_equal(com._random_state(state2).uniform(), npr.RandomState(10).uniform())
+
+    # check with no arg random state
+    assert isinstance(com._random_state(), npr.RandomState)
+
+    # Error for floats or strings
+    with tm.assertRaises(ValueError):
+        com._random_state('test')
+
+    with tm.assertRaises(ValueError):
+        com._random_state(5.5)
+
+
+def test_maybe_match_name():
+
+    matched = com._maybe_match_name(Series([1], name='x'), Series([2], name='x'))
+    assert(matched == 'x')
+
+    matched = com._maybe_match_name(Series([1], name='x'), Series([2], name='y'))
+    assert(matched is None)
+
+    matched = com._maybe_match_name(Series([1]), Series([2], name='x'))
+    assert(matched is None)
+
+    matched = com._maybe_match_name(Series([1], name='x'), Series([2]))
+    assert(matched is None)
+
+    matched = com._maybe_match_name(Series([1], name='x'), [2])
+    assert(matched == 'x')
+
+    matched = com._maybe_match_name([1], Series([2], name='y'))
+    assert(matched == 'y')
 
 
 class TestTake(tm.TestCase):
@@ -608,8 +683,9 @@ class TestTake(tm.TestCase):
         _test_dtype(np.bool_, '', np.object_)
 
     def test_2d_with_out(self):
-        def _test_dtype(dtype, can_hold_na):
+        def _test_dtype(dtype, can_hold_na, writeable=True):
             data = np.random.randint(0, 2, (5, 3)).astype(dtype)
+            data.flags.writeable = writeable
 
             indexer = [2, 1, 0, 1]
             out0 = np.empty((4, 3), dtype=dtype)
@@ -640,18 +716,22 @@ class TestTake(tm.TestCase):
                     # no exception o/w
                     data.take(indexer, out=out, axis=i)
 
-        _test_dtype(np.float64, True)
-        _test_dtype(np.float32, True)
-        _test_dtype(np.uint64, False)
-        _test_dtype(np.uint32, False)
-        _test_dtype(np.uint16, False)
-        _test_dtype(np.uint8, False)
-        _test_dtype(np.int64, False)
-        _test_dtype(np.int32, False)
-        _test_dtype(np.int16, False)
-        _test_dtype(np.int8, False)
-        _test_dtype(np.object_, True)
-        _test_dtype(np.bool, False)
+        for writeable in [True, False]:
+            # Check that take_nd works both with writeable arrays (in which
+            # case fast typed memoryviews implementation) and read-only
+            # arrays alike.
+            _test_dtype(np.float64, True, writeable=writeable)
+            _test_dtype(np.float32, True, writeable=writeable)
+            _test_dtype(np.uint64, False, writeable=writeable)
+            _test_dtype(np.uint32, False, writeable=writeable)
+            _test_dtype(np.uint16, False, writeable=writeable)
+            _test_dtype(np.uint8, False, writeable=writeable)
+            _test_dtype(np.int64, False, writeable=writeable)
+            _test_dtype(np.int32, False, writeable=writeable)
+            _test_dtype(np.int16, False, writeable=writeable)
+            _test_dtype(np.int8, False, writeable=writeable)
+            _test_dtype(np.object_, True, writeable=writeable)
+            _test_dtype(np.bool, False, writeable=writeable)
 
     def test_2d_fill_nonna(self):
         def _test_dtype(dtype, fill_value, out_dtype):
@@ -897,7 +977,7 @@ class TestTake(tm.TestCase):
 
     def test_2d_datetime64(self):
         # 2005/01/01 - 2006/01/01
-        arr = np.random.randint(long(11045376), long(11360736), (5,3))*100000000000
+        arr = np.random.randint(long(11045376), long(11360736), (5, 3))*100000000000
         arr = arr.view(dtype='datetime64[ns]')
         indexer = [0, 2, -1, 1, -1]
 
@@ -971,6 +1051,33 @@ class TestMaybe(tm.TestCase):
         tm.assert_numpy_array_equal(result, np.array(['x', 2], dtype=object))
         self.assertTrue(result.dtype == object)
 
+
+def test_dict_compat():
+    data_datetime64 = {np.datetime64('1990-03-15'): 1,
+                       np.datetime64('2015-03-15'): 2}
+    data_unchanged = {1: 2, 3: 4, 5: 6}
+    expected = {Timestamp('1990-3-15'): 1, Timestamp('2015-03-15'): 2}
+    assert(com._dict_compat(data_datetime64) == expected)
+    assert(com._dict_compat(expected) == expected)
+    assert(com._dict_compat(data_unchanged) == data_unchanged)
+
+
+def test_possibly_convert_objects_copy():
+    values = np.array([1, 2])
+
+    out = com._possibly_convert_objects(values, copy=False)
+    assert_true(values is out)
+
+    out = com._possibly_convert_objects(values, copy=True)
+    assert_true(values is not out)
+
+    values = np.array(['apply','banana'])
+    out = com._possibly_convert_objects(values, copy=False)
+    assert_true(values is out)
+
+    out = com._possibly_convert_objects(values, copy=True)
+    assert_true(values is not out)
+    
 
 if __name__ == '__main__':
     nose.runmodule(argv=[__file__, '-vvs', '-x', '--pdb', '--pdb-failure'],

@@ -117,26 +117,26 @@ class TestMultiLevel(tm.TestCase):
         multi = DataFrame(np.random.randn(4, 4),
                           index=[np.array(['a', 'a', 'b', 'b']),
                                  np.array(['x', 'y', 'x', 'y'])])
-        tm.assert_isinstance(multi.index, MultiIndex)
+        tm.assertIsInstance(multi.index, MultiIndex)
         self.assertNotIsInstance(multi.columns, MultiIndex)
 
         multi = DataFrame(np.random.randn(4, 4),
                           columns=[['a', 'a', 'b', 'b'],
                                    ['x', 'y', 'x', 'y']])
-        tm.assert_isinstance(multi.columns, MultiIndex)
+        tm.assertIsInstance(multi.columns, MultiIndex)
 
     def test_series_constructor(self):
         multi = Series(1., index=[np.array(['a', 'a', 'b', 'b']),
                                   np.array(['x', 'y', 'x', 'y'])])
-        tm.assert_isinstance(multi.index, MultiIndex)
+        tm.assertIsInstance(multi.index, MultiIndex)
 
         multi = Series(1., index=[['a', 'a', 'b', 'b'],
                                   ['x', 'y', 'x', 'y']])
-        tm.assert_isinstance(multi.index, MultiIndex)
+        tm.assertIsInstance(multi.index, MultiIndex)
 
         multi = Series(lrange(4), index=[['a', 'a', 'b', 'b'],
                                         ['x', 'y', 'x', 'y']])
-        tm.assert_isinstance(multi.index, MultiIndex)
+        tm.assertIsInstance(multi.index, MultiIndex)
 
     def test_reindex_level(self):
         # axis=0
@@ -149,7 +149,7 @@ class TestMultiLevel(tm.TestCase):
         # Series
         result = month_sums['A'].reindex(self.ymd.index, level=1)
         expected = self.ymd['A'].groupby(level='month').transform(np.sum)
-        assert_series_equal(result, expected)
+        assert_series_equal(result, expected, check_names=False)
 
         # axis=1
         month_sums = self.ymd.T.sum(axis=1, level='month')
@@ -173,6 +173,7 @@ class TestMultiLevel(tm.TestCase):
             broadcasted = self.ymd['A'].groupby(
                 level='month').transform(np.sum)
             expected = op(self.ymd['A'], broadcasted)
+            expected.name = 'A'
             assert_series_equal(result, expected)
 
         _check_op('sub')
@@ -426,8 +427,15 @@ class TestMultiLevel(tm.TestCase):
         # it broadcasts
         df['B', '1'] = [1, 2, 3]
         df['A'] = df['B', '1']
-        assert_series_equal(df['A', '1'], df['B', '1'])
-        assert_series_equal(df['A', '2'], df['B', '1'])
+
+        sliced_a1 = df['A', '1']
+        sliced_a2 = df['A', '2']
+        sliced_b1 = df['B', '1']
+        assert_series_equal(sliced_a1, sliced_b1, check_names=False)
+        assert_series_equal(sliced_a2, sliced_b1, check_names=False)
+        self.assertEqual(sliced_a1.name, ('A', '1'))
+        self.assertEqual(sliced_a2.name, ('A', '2'))
+        self.assertEqual(sliced_b1.name, ('B', '1'))
 
     def test_getitem_tuple_plus_slice(self):
         # GH #671
@@ -461,7 +469,9 @@ class TestMultiLevel(tm.TestCase):
         df = df.set_index(index_columns)
         query_index = df.index[:1]
         rs = df.ix[query_index, "data"]
-        xp = Series(['x'], index=MultiIndex.from_tuples([(0, 1, 0)]))
+
+        xp_idx = MultiIndex.from_tuples([(0, 1, 0)], names=['a', 'b', 'c'])
+        xp = Series(['x'], index=xp_idx, name='data')
         assert_series_equal(rs, xp)
 
     def test_xs(self):
@@ -692,7 +702,7 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
         s = dft['foo', 'two']
         dft['foo', 'two'] = s > s.median()
         assert_series_equal(dft['foo', 'two'], s > s.median())
-        # tm.assert_isinstance(dft._data.blocks[1].items, MultiIndex)
+        # tm.assertIsInstance(dft._data.blocks[1].items, MultiIndex)
 
         reindexed = dft.reindex(columns=[('foo', 'two')])
         assert_series_equal(reindexed['foo', 'two'], s > s.median())
@@ -736,14 +746,11 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
     def test_sortlevel(self):
         df = self.frame.copy()
         df.index = np.arange(len(df))
-        assertRaisesRegexp(TypeError, 'hierarchical index', df.sortlevel, 0)
 
         # axis=1
 
         # series
         a_sorted = self.frame['A'].sortlevel(0)
-        with assertRaisesRegexp(TypeError, 'hierarchical index'):
-            self.frame.reset_index()['A'].sortlevel()
 
         # preserve names
         self.assertEqual(a_sorted.index.names, self.frame.index.names)
@@ -788,12 +795,12 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
         self.assertEqual(len(deleveled.columns), len(self.ymd.columns))
 
         deleveled = self.series.reset_index()
-        tm.assert_isinstance(deleveled, DataFrame)
+        tm.assertIsInstance(deleveled, DataFrame)
         self.assertEqual(len(deleveled.columns),
                          len(self.series.index.levels) + 1)
 
         deleveled = self.series.reset_index(drop=True)
-        tm.assert_isinstance(deleveled, Series)
+        tm.assertIsInstance(deleveled, Series)
 
     def test_sortlevel_by_name(self):
         self.frame.index.names = ['first', 'second']
@@ -865,7 +872,7 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
     def test_count_level_corner(self):
         s = self.frame['A'][:0]
         result = s.count(level=0)
-        expected = Series(0, index=s.index.levels[0])
+        expected = Series(0, index=s.index.levels[0], name='A')
         assert_series_equal(result, expected)
 
         df = self.frame[:0]
@@ -925,7 +932,7 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
 
         # columns unsorted
         unstacked = self.ymd.unstack()
-        unstacked = unstacked.sort(axis=1, ascending=False)
+        unstacked = unstacked.sort_index(axis=1, ascending=False)
         restacked = unstacked.stack()
         assert_frame_equal(restacked, self.ymd)
 
@@ -953,6 +960,44 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
         # stack with negative number
         result = self.ymd.unstack(0).stack(-2)
         expected = self.ymd.unstack(0).stack(0)
+
+        # GH10417
+        def check(left, right):
+            assert_series_equal(left, right)
+            self.assertFalse(left.index.is_unique)
+            li, ri = left.index, right.index
+            for i in range(ri.nlevels):
+                tm.assert_numpy_array_equal(li.levels[i], ri.levels[i])
+                tm.assert_numpy_array_equal(li.labels[i], ri.labels[i])
+
+        df = DataFrame(np.arange(12).reshape(4, 3),
+                       index=list('abab'),
+                       columns=['1st', '2nd', '3rd'])
+
+        mi = MultiIndex(levels=[['a', 'b'], ['1st', '2nd', '3rd']],
+                        labels=[np.tile(np.arange(2).repeat(3), 2),
+                                np.tile(np.arange(3), 4)])
+
+        left, right = df.stack(), Series(np.arange(12), index=mi)
+        check(left, right)
+
+        df.columns = ['1st', '2nd', '1st']
+        mi = MultiIndex(levels=[['a', 'b'], ['1st', '2nd']],
+                        labels=[np.tile(np.arange(2).repeat(3), 2),
+                                np.tile([0, 1, 0], 4)])
+
+        left, right = df.stack(), Series(np.arange(12), index=mi)
+        check(left, right)
+
+        tpls = ('a', 2), ('b', 1), ('a', 1), ('b', 2)
+        df.index = MultiIndex.from_tuples(tpls)
+        mi = MultiIndex(levels=[['a', 'b'], [1, 2], ['1st', '2nd']],
+                        labels=[np.tile(np.arange(2).repeat(3), 2),
+                                np.repeat([1, 0, 1], [3, 6, 3]),
+                                np.tile([0, 1, 0], 4)])
+
+        left, right = df.stack(), Series(np.arange(12), index=mi)
+        check(left, right)
 
     def test_unstack_odd_failure(self):
         data = """day,time,smoker,sum,len
@@ -982,7 +1027,9 @@ Thur,Lunch,Yes,51.51,17"""
         df = df.sortlevel(1, axis=1)
 
         stacked = df.stack()
-        assert_series_equal(stacked['foo'], df['foo'].stack())
+        result = df['foo'].stack()
+        assert_series_equal(stacked['foo'], result, check_names=False)
+        self.assertIs(result.name, None)
         self.assertEqual(stacked['bar'].dtype, np.float_)
 
     def test_unstack_bug(self):
@@ -1198,7 +1245,8 @@ Thur,Lunch,Yes,51.51,17"""
 
         applied = grouped.apply(lambda x: x * 2)
         expected = grouped.transform(lambda x: x * 2)
-        assert_series_equal(applied.reindex(expected.index), expected)
+        result = applied.reindex(expected.index)
+        assert_series_equal(result, expected, check_names=False)
 
     def test_unstack_sparse_keyspace(self):
         # memory problems with naive impl #2278
@@ -1312,7 +1360,7 @@ Thur,Lunch,Yes,51.51,17"""
     def test_insert_index(self):
         df = self.ymd[:5].T
         df[2000, 1, 10] = df[2000, 1, 7]
-        tm.assert_isinstance(df.columns, MultiIndex)
+        tm.assertIsInstance(df.columns, MultiIndex)
         self.assertTrue((df[2000, 1, 10] == df[2000, 1, 7]).all())
 
     def test_alignment(self):
@@ -1430,11 +1478,13 @@ Thur,Lunch,Yes,51.51,17"""
 
         result = series.count(level='b')
         expect = self.series.count(level=1)
-        assert_series_equal(result, expect)
+        assert_series_equal(result, expect, check_names=False)
+        self.assertEqual(result.index.name, 'b')
 
         result = series.count(level='a')
         expect = self.series.count(level=0)
-        assert_series_equal(result, expect)
+        assert_series_equal(result, expect, check_names=False)
+        self.assertEqual(result.index.name, 'a')
 
         self.assertRaises(KeyError, series.count, 'x')
         self.assertRaises(KeyError, frame.count, level='x')
@@ -1738,12 +1788,12 @@ Thur,Lunch,Yes,51.51,17"""
 
         result = df['a']
         expected = df['a', '', '']
-        assert_series_equal(result, expected)
+        assert_series_equal(result, expected, check_names=False)
         self.assertEqual(result.name, 'a')
 
         result = df['routine1', 'result1']
         expected = df['routine1', 'result1', '']
-        assert_series_equal(result, expected)
+        assert_series_equal(result, expected, check_names=False)
         self.assertEqual(result.name, ('routine1', 'result1'))
 
     def test_mixed_depth_insert(self):
@@ -1825,7 +1875,7 @@ Thur,Lunch,Yes,51.51,17"""
         df2 = df.copy()
         result = df1.pop('a')
         expected = df2.pop(('a', '', ''))
-        assert_series_equal(expected, result)
+        assert_series_equal(expected, result, check_names=False)
         assert_frame_equal(df1, df2)
         self.assertEqual(result.name, 'a')
 
@@ -1978,8 +2028,8 @@ Thur,Lunch,Yes,51.51,17"""
                           columns=columns)
 
         result = frame.ix[:, 1]
-        exp = frame.icol(1)
-        tm.assert_isinstance(result, Series)
+        exp = frame.loc[:, ('Ohio', 'Red')]
+        tm.assertIsInstance(result, Series)
         assert_series_equal(result, exp)
 
     def test_nonunique_assignment_1750(self):
@@ -2083,11 +2133,28 @@ Thur,Lunch,Yes,51.51,17"""
         tm.assert_index_equal(idx.drop_duplicates(), expected)
 
         expected = np.array([True, False, False, False, False, False])
-        duplicated = idx.duplicated(take_last=True)
+        duplicated = idx.duplicated(keep='last')
         tm.assert_numpy_array_equal(duplicated, expected)
         self.assertTrue(duplicated.dtype == bool)
         expected = MultiIndex.from_arrays(([2, 3, 1, 2 ,3], [1, 1, 1, 2, 2]))
-        tm.assert_index_equal(idx.drop_duplicates(take_last=True), expected)
+        tm.assert_index_equal(idx.drop_duplicates(keep='last'), expected)
+
+        expected = np.array([True, False, False, True, False, False])
+        duplicated = idx.duplicated(keep=False)
+        tm.assert_numpy_array_equal(duplicated, expected)
+        self.assertTrue(duplicated.dtype == bool)
+        expected = MultiIndex.from_arrays(([2, 3, 2 ,3], [1, 1, 2, 2]))
+        tm.assert_index_equal(idx.drop_duplicates(keep=False), expected)
+
+        # deprecate take_last
+        expected = np.array([True, False, False, False, False, False])
+        with tm.assert_produces_warning(FutureWarning):
+            duplicated = idx.duplicated(take_last=True)
+        tm.assert_numpy_array_equal(duplicated, expected)
+        self.assertTrue(duplicated.dtype == bool)
+        expected = MultiIndex.from_arrays(([2, 3, 1, 2 ,3], [1, 1, 1, 2, 2]))
+        with tm.assert_produces_warning(FutureWarning):
+            tm.assert_index_equal(idx.drop_duplicates(take_last=True), expected)
 
     def test_multiindex_set_index(self):
         # segfault in #3308

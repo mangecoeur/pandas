@@ -539,7 +539,7 @@ class TestMoments(Base):
                 result = func(arr, 20, center=True)
                 expected = func(np.concatenate((arr, np.array([np.NaN] * 9))), 20)[9:]
 
-            self.assert_numpy_array_equivalent(result, expected)
+            self.assert_numpy_array_equal(result, expected)
 
         if test_stable:
             result = func(self.arr + 1e9, window)
@@ -574,7 +574,7 @@ class TestMoments(Base):
                           fill_value=None):
 
         series_result = func(self.series, 50)
-        tm.assert_isinstance(series_result, Series)
+        tm.assertIsInstance(series_result, Series)
 
         frame_result = func(self.frame, 50)
         self.assertEqual(type(frame_result), DataFrame)
@@ -725,6 +725,14 @@ class TestMoments(Base):
         self.assertRaises(Exception, mom.ewma, self.arr, com=9.5, span=20, halflife=50)
         self.assertRaises(Exception, mom.ewma, self.arr)
 
+    def test_moment_preserve_series_name(self):
+        # GH 10565
+        s = Series(np.arange(100), name='foo')
+        s2 = mom.rolling_mean(s, 30)
+        s3 = mom.rolling_sum(s, 20)
+        self.assertEqual(s2.name, 'foo')
+        self.assertEqual(s3.name, 'foo')
+
     def test_ew_empty_arrays(self):
         arr = np.array([], dtype=np.float64)
 
@@ -782,7 +790,7 @@ class TestMoments(Base):
 
     def _check_ew_structures(self, func):
         series_result = func(self.series, com=10)
-        tm.assert_isinstance(series_result, Series)
+        tm.assertIsInstance(series_result, Series)
         frame_result = func(self.frame, com=10)
         self.assertEqual(type(frame_result), DataFrame)
 
@@ -862,7 +870,7 @@ class TestMomentsConsistency(Base):
             if mock_mean:
                 # check that mean equals mock_mean
                 expected = mock_mean(x)
-                assert_equal(mean_x, expected)
+                assert_equal(mean_x, expected.astype('float64'))
 
             # check that correlation of a series with itself is either 1 or NaN
             corr_x_x = corr(x, x)
@@ -1254,7 +1262,8 @@ class TestMomentsConsistency(Base):
 
         actual = panel.ix[:, 1, 5]
         expected = func(self.frame[1], self.frame[5], *args, **kwargs)
-        tm.assert_series_equal(actual, expected)
+        tm.assert_series_equal(actual, expected, check_names=False)
+        self.assertEqual(actual.name, 5)
 
     def test_flex_binary_moment(self):
         # GH3155
@@ -1549,6 +1558,7 @@ class TestMomentsConsistency(Base):
         df1_expected = df1
         df1_expected_panel = Panel(items=df1.index, major_axis=df1.columns, minor_axis=df1.columns)
         df2 = DataFrame(columns=['a'])
+        df2['a'] = df2['a'].astype('float64')
         df2_expected = df2
         df2_expected_panel = Panel(items=df2.index, major_axis=df2.columns, minor_axis=df2.columns)
 
@@ -1674,7 +1684,7 @@ class TestMomentsConsistency(Base):
                     assert_index_equal(result.columns, df.columns)
                 for i, result in enumerate(results):
                     if i > 0:
-                        self.assert_numpy_array_equivalent(result, results[0])
+                        self.assert_numpy_array_equal(result, results[0])
 
             # DataFrame with itself, pairwise=True
             for f in [lambda x: mom.expanding_cov(x, pairwise=True),
@@ -1691,7 +1701,7 @@ class TestMomentsConsistency(Base):
                     assert_index_equal(result.minor_axis, df.columns)
                 for i, result in enumerate(results):
                     if i > 0:
-                        self.assert_numpy_array_equivalent(result, results[0])
+                        self.assert_numpy_array_equal(result, results[0])
 
             # DataFrame with itself, pairwise=False
             for f in [lambda x: mom.expanding_cov(x, pairwise=False),
@@ -1707,7 +1717,7 @@ class TestMomentsConsistency(Base):
                     assert_index_equal(result.columns, df.columns)
                 for i, result in enumerate(results):
                     if i > 0:
-                        self.assert_numpy_array_equivalent(result, results[0])
+                        self.assert_numpy_array_equal(result, results[0])
 
             # DataFrame with another DataFrame, pairwise=True
             for f in [lambda x, y: mom.expanding_cov(x, y, pairwise=True),
@@ -1724,7 +1734,7 @@ class TestMomentsConsistency(Base):
                     assert_index_equal(result.minor_axis, df2.columns)
                 for i, result in enumerate(results):
                     if i > 0:
-                        self.assert_numpy_array_equivalent(result, results[0])
+                        self.assert_numpy_array_equal(result, results[0])
 
             # DataFrame with another DataFrame, pairwise=False
             for f in [lambda x, y: mom.expanding_cov(x, y, pairwise=False),
@@ -1759,7 +1769,7 @@ class TestMomentsConsistency(Base):
                     assert_index_equal(result.columns, df.columns)
                 for i, result in enumerate(results):
                     if i > 0:
-                        self.assert_numpy_array_equivalent(result, results[0])
+                        self.assert_numpy_array_equal(result, results[0])
 
     def test_rolling_skew_edge_cases(self):
 
@@ -1842,7 +1852,7 @@ class TestMomentsConsistency(Base):
 
     def _check_expanding_structures(self, func):
         series_result = func(self.series)
-        tm.assert_isinstance(series_result, Series)
+        tm.assertIsInstance(series_result, Series)
         frame_result = func(self.frame)
         self.assertEqual(type(frame_result), DataFrame)
 

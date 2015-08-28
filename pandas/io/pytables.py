@@ -13,11 +13,13 @@ import warnings
 import os
 
 import numpy as np
-from pandas import (Series, TimeSeries, DataFrame, Panel, Panel4D, Index,
+import pandas as pd
+from pandas import (Series, DataFrame, Panel, Panel4D, Index,
                     MultiIndex, Int64Index, Timestamp)
 from pandas.sparse.api import SparseSeries, SparseDataFrame, SparsePanel
 from pandas.sparse.array import BlockIndex, IntIndex
 from pandas.tseries.api import PeriodIndex, DatetimeIndex
+from pandas.tseries.tdi import TimedeltaIndex
 from pandas.core.base import StringMixin
 from pandas.core.common import adjoin, pprint_thing
 from pandas.core.algorithms import match, unique
@@ -163,7 +165,7 @@ _TYPE_MAP = {
 
     Series: u('series'),
     SparseSeries: u('sparse_series'),
-    TimeSeries: u('series'),
+    pd.TimeSeries: u('series'),
     DataFrame: u('frame'),
     SparseDataFrame: u('sparse_frame'),
     Panel: u('wide'),
@@ -219,7 +221,7 @@ format_doc = """
 """
 
 with config.config_prefix('io.hdf'):
-    config.register_option('dropna_table', True, dropna_doc,
+    config.register_option('dropna_table', False, dropna_doc,
                            validator=config.is_bool)
     config.register_option(
         'default_format', None, format_doc,
@@ -256,6 +258,7 @@ def _tables():
 def to_hdf(path_or_buf, key, value, mode=None, complevel=None, complib=None,
            append=None, **kwargs):
     """ store this object, close it if we opened it """
+
     if append:
         f = lambda store: store.append(key, value, **kwargs)
     else:
@@ -269,7 +272,7 @@ def to_hdf(path_or_buf, key, value, mode=None, complevel=None, complib=None,
         f(path_or_buf)
 
 
-def read_hdf(path_or_buf, key, **kwargs):
+def read_hdf(path_or_buf, key=None, **kwargs):
     """ read from the store, close it if we opened it
 
         Retrieve pandas object stored in file, optionally based on where
@@ -278,7 +281,8 @@ def read_hdf(path_or_buf, key, **kwargs):
         Parameters
         ----------
         path_or_buf : path (string), or buffer to read from
-        key : group identifier in the store
+        key : group identifier in the store. Can be omitted a HDF file contains
+            a single pandas object.
         where : list of Term (or convertable) objects, optional
         start : optional, integer (defaults to None), row number to start
             selection
@@ -288,8 +292,6 @@ def read_hdf(path_or_buf, key, **kwargs):
             return columns
         iterator : optional, boolean, return an iterator, default False
         chunksize : optional, nrows to include in iteration, return an iterator
-        auto_close : optional, boolean, should automatically close the store
-            when finished, default is False
 
         Returns
         -------
@@ -300,9 +302,6 @@ def read_hdf(path_or_buf, key, **kwargs):
     # grab the scope
     if 'where' in kwargs:
         kwargs['where'] = _ensure_term(kwargs['where'], scope_level=1)
-
-    f = lambda store, auto_close: store.select(
-        key, auto_close=auto_close, **kwargs)
 
     if isinstance(path_or_buf, string_types):
 
@@ -319,20 +318,34 @@ def read_hdf(path_or_buf, key, **kwargs):
         # can't auto open/close if we are using an iterator
         # so delegate to the iterator
         store = HDFStore(path_or_buf, **kwargs)
+        auto_close = True
+
+    elif isinstance(path_or_buf, HDFStore):
+        if not path_or_buf.is_open:
+            raise IOError('The HDFStore must be open for reading.')
+
+        store = path_or_buf
+        auto_close = False
+    else:
+        raise NotImplementedError('Support for generic buffers has not been '
+                                  'implemented.')
+
+    try:
+        if key is None:
+            keys = store.keys()
+            if len(keys) != 1:
+                raise ValueError('key must be provided when HDF file contains '
+                                 'multiple datasets.')
+            key = keys[0]
+        return store.select(key, auto_close=auto_close, **kwargs)
+    except:
+        # if there is an error, close the store
         try:
-            return f(store, True)
+            store.close()
         except:
+            pass
 
-            # if there is an error, close the store
-            try:
-                store.close()
-            except:
-                pass
-
-            raise
-
-    # a passed store; user controls open/close
-    f(path_or_buf, False)
+        raise
 
 
 class HDFStore(StringMixin):
@@ -383,6 +396,10 @@ class HDFStore(StringMixin):
             import tables
         except ImportError as ex:  # pragma: no cover
             raise ImportError('HDFStore requires PyTables, "{ex}" problem importing'.format(ex=str(ex)))
+
+        if complib not in (None, 'blosc', 'bzip2', 'lzo', 'zlib'):
+            raise ValueError("complib only supports 'blosc', 'bzip2', lzo' "
+                             "or 'zlib' compression.")
 
         self._path = path
         if mode is None:
@@ -801,7 +818,7 @@ class HDFStore(StringMixin):
             This will force Table format, append the input data to the
             existing.
         encoding : default None, provide an encoding for strings
-        dropna   : boolean, default True, do not write an ALL nan row to
+        dropna   : boolean, default False, do not write an ALL nan row to
             the store settable by the option 'io.hdf.dropna_table'
         """
         if format is None:
@@ -883,7 +900,7 @@ class HDFStore(StringMixin):
         chunksize    : size to chunk the writing
         expectedrows : expected TOTAL row size of this table
         encoding     : default None, provide an encoding for strings
-        dropna       : boolean, default True, do not write an ALL nan row to
+        dropna       : boolean, default False, do not write an ALL nan row to
             the store settable by the option 'io.hdf.dropna_table'
         Notes
         -----
@@ -903,7 +920,7 @@ class HDFStore(StringMixin):
                              **kwargs)
 
     def append_to_multiple(self, d, value, selector, data_columns=None,
-                           axes=None, dropna=True, **kwargs):
+                           axes=None, dropna=False, **kwargs):
         """
         Append to multiple tables
 
@@ -918,7 +935,7 @@ class HDFStore(StringMixin):
         data_columns : list of columns to create as data columns, or True to
             use all columns
         dropna : if evaluates to True, drop rows from all tables if any single
-                 row in each table has all NaN
+                 row in each table has all NaN. Default False.
 
         Notes
         -----
@@ -1099,17 +1116,6 @@ class HDFStore(StringMixin):
     def _validate_format(self, format, kwargs):
         """ validate / deprecate formats; return the new kwargs """
         kwargs = kwargs.copy()
-
-        # table arg
-        table = kwargs.pop('table', None)
-
-        if table is not None:
-            warnings.warn(format_deprecate_doc, FutureWarning)
-
-            if table:
-                format = 'table'
-            else:
-                format = 'fixed'
 
         # validate
         try:
@@ -1534,6 +1540,12 @@ class IndexCol(StringMixin):
                 self.typ = _tables(
                 ).StringCol(itemsize=min_itemsize, pos=self.pos)
 
+    def validate(self, handler, append, **kwargs):
+        self.validate_names()
+
+    def validate_names(self):
+        pass
+
     def validate_and_set(self, handler, append, **kwargs):
         self.set_table(handler.table)
         self.validate_col()
@@ -1751,6 +1763,8 @@ class DataCol(IndexCol):
                 self.kind = 'string'
             elif dtype.startswith(u('float')):
                 self.kind = 'float'
+            elif dtype.startswith(u('complex')):
+                self.kind = 'complex'
             elif dtype.startswith(u('int')) or dtype.startswith(u('uint')):
                 self.kind = 'integer'
             elif dtype.startswith(u('date')):
@@ -1780,6 +1794,8 @@ class DataCol(IndexCol):
             return self.set_atom_datetime64(block)
         elif block.is_timedelta:
             return self.set_atom_timedelta64(block)
+        elif block.is_complex:
+            return self.set_atom_complex(block)
 
         dtype = block.dtype.name
         inferred_type = lib.infer_dtype(block.values)
@@ -1913,6 +1929,12 @@ class DataCol(IndexCol):
 
     def get_atom_data(self, block, kind=None):
         return self.get_atom_coltype(kind=kind)(shape=block.shape[0])
+
+    def set_atom_complex(self, block):
+        self.kind = block.dtype.name
+        itemsize = int(self.kind.split('complex')[-1]) // 8
+        self.typ = _tables().ComplexCol(itemsize=itemsize, shape=block.shape[0])
+        self.set_data(block.values.astype(self.typ.type, copy=False))
 
     def set_atom_data(self, block):
         self.kind = block.dtype.name
@@ -2078,6 +2100,10 @@ class DataIndexableCol(DataCol):
 
     """ represent a data column that can be indexed """
     is_data_indexable = True
+
+    def validate_names(self):
+        if not Index(self.values).is_object():
+            raise ValueError("cannot have non-object label DataIndexableCol")
 
     def get_atom_string(self, block, itemsize):
         return _tables().StringCol(itemsize=itemsize)
@@ -3013,7 +3039,8 @@ class Table(Fixed):
 
         """
         values = Series(values)
-        self.parent.put(self._get_metadata_path(key), values, format='table')
+        self.parent.put(self._get_metadata_path(key), values, format='table',
+                encoding=self.encoding, nan_rep=self.nan_rep)
 
     def read_metadata(self, key):
         """ return the meta data array for this key """
@@ -3121,8 +3148,8 @@ class Table(Fixed):
     def create_index(self, columns=None, optlevel=None, kind=None):
         """
         Create a pytables index on the specified columns
-          note: cannot index Time64Col() currently; PyTables must be >= 2.3
-
+          note: cannot index Time64Col() or ComplexCol currently;
+          PyTables must be >= 3.0
 
         Paramaters
         ----------
@@ -3177,6 +3204,12 @@ class Table(Fixed):
 
                 # create the index
                 if not v.is_indexed:
+                    if v.type.startswith('complex'):
+                        raise TypeError('Columns containing complex values can be stored but cannot'
+                                        ' be indexed when using table format. Either use fixed '
+                                        'format, set index=False, or do not include the columns '
+                                        'containing complex values to data_columns when '
+                                        'initializing the table.')
                     v.create_index(**kw)
 
     def read_axes(self, where, **kwargs):
@@ -3452,6 +3485,10 @@ class Table(Fixed):
     def process_axes(self, obj, columns=None):
         """ process axes filters """
 
+        # make a copy to avoid side effects
+        if columns is not None:
+            columns = list(columns)
+
         # make sure to include levels if we have them
         if columns is not None and self.is_multi_index:
             for n in self.levels:
@@ -3585,7 +3622,7 @@ class Table(Fixed):
                                                 nan_rep=self.nan_rep,
                                                 encoding=self.encoding
                                                 ).take_data(),
-                                      a.tz, True))
+                                      a.tz, True), name=column)
 
         raise KeyError("column [%s] not found in the table" % column)
 
@@ -3741,7 +3778,7 @@ class AppendableTable(LegacyTable):
 
     def write(self, obj, axes=None, append=False, complib=None,
               complevel=None, fletcher32=None, min_itemsize=None,
-              chunksize=None, expectedrows=None, dropna=True, **kwargs):
+              chunksize=None, expectedrows=None, dropna=False, **kwargs):
 
         if not append and self.is_exists:
             self._handle.remove_node(self.group, 'table')
@@ -3750,6 +3787,9 @@ class AppendableTable(LegacyTable):
         self.create_axes(axes=axes, obj=obj, validate=append,
                          min_itemsize=min_itemsize,
                          **kwargs)
+
+        for a in self.axes:
+            a.validate(self, append)
 
         if not self.is_exists:
 
@@ -3778,7 +3818,7 @@ class AppendableTable(LegacyTable):
         # add the rows
         self.write_data(chunksize, dropna=dropna)
 
-    def write_data(self, chunksize, dropna=True):
+    def write_data(self, chunksize, dropna=False):
         """ we form the data into a 2-d including indexes,values,mask
             write chunk-by-chunk """
 
@@ -3924,7 +3964,7 @@ class AppendableTable(LegacyTable):
         values = self.selection.select_coords()
 
         # delete the rows in reverse order
-        l = Series(values).order()
+        l = Series(values).sort_values()
         ln = len(l)
 
         if ln:
@@ -4234,6 +4274,11 @@ def _convert_index(index, encoding=None, format_type=None):
                         freq=getattr(index, 'freq', None),
                         tz=getattr(index, 'tz', None),
                         index_name=index_name)
+    elif isinstance(index, TimedeltaIndex):
+        converted = index.asi8
+        return IndexCol(converted, 'timedelta64', _tables().Int64Col(),
+                        freq=getattr(index, 'freq', None),
+                        index_name=index_name)
     elif isinstance(index, (Int64Index, PeriodIndex)):
         atom = _tables().Int64Col()
         return IndexCol(
@@ -4252,6 +4297,11 @@ def _convert_index(index, encoding=None, format_type=None):
         return IndexCol(converted, 'datetime64', _tables().Int64Col(),
                         freq=getattr(index, 'freq', None),
                         tz=getattr(index, 'tz', None),
+                        index_name=index_name)
+    elif inferred_type == 'timedelta64':
+        converted = values.view('i8')
+        return IndexCol(converted, 'timedelta64', _tables().Int64Col(),
+                        freq=getattr(index, 'freq', None),
                         index_name=index_name)
     elif inferred_type == 'datetime':
         converted = np.asarray([(time.mktime(v.timetuple()) +
@@ -4303,6 +4353,8 @@ def _unconvert_index(data, kind, encoding=None):
     kind = _ensure_decoded(kind)
     if kind == u('datetime64'):
         index = DatetimeIndex(data)
+    elif kind == u('timedelta64'):
+        index = TimedeltaIndex(data)
     elif kind == u('datetime'):
         index = np.asarray([datetime.fromtimestamp(v) for v in data],
                            dtype=object)
@@ -4338,11 +4390,23 @@ def _unconvert_index_legacy(data, kind, legacy=False, encoding=None):
 
 
 def _convert_string_array(data, encoding, itemsize=None):
+    """
+    we take a string-like that is object dtype and coerce to a fixed size string type
+
+    Parameters
+    ----------
+    data : a numpy array of object dtype
+    encoding : None or string-encoding
+    itemsize : integer, optional, defaults to the max length of the strings
+
+    Returns
+    -------
+    data in a fixed-length string dtype, encoded to bytes if needed
+    """
 
     # encode if needed
     if encoding is not None and len(data):
-        f = np.vectorize(lambda x: x.encode(encoding), otypes=[np.object])
-        data = f(data)
+        data = Series(data.ravel()).str.encode(encoding).values.reshape(data.shape)
 
     # create the sized dtype
     if itemsize is None:
@@ -4352,7 +4416,20 @@ def _convert_string_array(data, encoding, itemsize=None):
     return data
 
 def _unconvert_string_array(data, nan_rep=None, encoding=None):
-    """ deserialize a string array, possibly decoding """
+    """
+    inverse of _convert_string_array
+
+    Parameters
+    ----------
+    data : fixed length string dtyped array
+    nan_rep : the storage repr of NaN, optional
+    encoding : the encoding of the data, optional
+
+    Returns
+    -------
+    an object array of the decoded data
+
+    """
     shape = data.shape
     data = np.asarray(data.ravel(), dtype=object)
 
@@ -4361,16 +4438,16 @@ def _unconvert_string_array(data, nan_rep=None, encoding=None):
     encoding = _ensure_encoding(encoding)
     if encoding is not None and len(data):
 
-        try:
-            itemsize = lib.max_len_string_array(com._ensure_object(data.ravel()))
-            if compat.PY3:
-                dtype = "U{0}".format(itemsize)
-            else:
-                dtype = "S{0}".format(itemsize)
+        itemsize = lib.max_len_string_array(com._ensure_object(data))
+        if compat.PY3:
+            dtype = "U{0}".format(itemsize)
+        else:
+            dtype = "S{0}".format(itemsize)
+
+        if isinstance(data[0], compat.binary_type):
+            data = Series(data).str.decode(encoding).values
+        else:
             data = data.astype(dtype, copy=False).astype(object, copy=False)
-        except (Exception) as e:
-            f = np.vectorize(lambda x: x.decode(encoding), otypes=[np.object])
-            data = f(data)
 
     if nan_rep is None:
         nan_rep = 'nan'

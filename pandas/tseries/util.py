@@ -1,8 +1,5 @@
 from pandas.compat import range, lrange
 import numpy as np
-
-import pandas as pd
-
 import pandas.core.common as com
 from pandas.core.frame import DataFrame
 import pandas.core.nanops as nanops
@@ -31,7 +28,7 @@ def pivot_annual(series, freq=None):
 
     Parameters
     ----------
-    series : TimeSeries
+    series : Series
     freq : string or None, default None
 
     Returns

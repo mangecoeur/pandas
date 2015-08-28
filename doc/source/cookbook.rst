@@ -17,7 +17,12 @@
    np.random.seed(123456)
 
    pd.options.display.max_rows=15
-   pd.options.display.mpl_style='default'
+
+   import matplotlib
+   try:
+      matplotlib.style.use('ggplot')
+   except AttributeError:
+      pd.options.display.mpl_style = 'default'
 
    np.set_printoptions(precision=4, suppress=True)
 
@@ -740,6 +745,9 @@ Timeseries
 `Vectorized Lookup
 <http://stackoverflow.com/questions/13893227/vectorized-look-up-of-values-in-pandas-dataframe>`__
 
+`Aggregation and plotting time series
+<http://nipunbatra.github.io/2015/06/timeseries/>`__
+
 Turn a matrix with hours in columns and days in rows into a continuous row sequence in the form of a time series.
 `How to rearrange a python pandas DataFrame?
 <http://stackoverflow.com/questions/15432659/how-to-rearrange-a-python-pandas-dataframe>`__
@@ -825,6 +833,9 @@ ignore_index is needed in pandas < v0.13, and depending on df construction
 
 `Join with a criteria based on the values
 <http://stackoverflow.com/questions/15581829/how-to-perform-an-inner-or-outer-join-of-dataframes-with-pandas-on-non-simplisti>`__
+
+`Using searchsorted to merge based on values inside a range
+<http://stackoverflow.com/questions/25125626/pandas-merge-with-logic/2512764>`__
 
 .. _cookbook.plotting:
 
@@ -980,7 +991,13 @@ The :ref:`Excel <io.excel>` docs
 `Reading from a filelike handle
 <http://stackoverflow.com/questions/15588713/sheets-of-excel-workbook-from-a-url-into-a-pandas-dataframe>`__
 
+`Modifying formatting in XlsxWriter output
+<http://pbpython.com/improve-pandas-excel-output.html>`__
+
 .. _cookbook.html:
+
+HTML
+****
 
 `Reading HTML tables from a server that cannot handle the default request
 header <http://stackoverflow.com/a/18939272/564538>`__
@@ -1000,6 +1017,9 @@ The :ref:`HDFStores <io.hdf5>` docs
 
 `Merging on-disk tables with millions of rows
 <http://stackoverflow.com/questions/14614512/merging-two-tables-with-millions-of-rows-in-python/14617925#14617925>`__
+
+`Avoiding inconsistencies when writing to a store from multiple processes/threads
+<http://stackoverflow.com/a/29014295/2858145>`__
 
 De-duplicating a large store by chunks, essentially a recursive reduction operation. Shows a function for taking in data from
 csv file and creating a store by chunks, with date parsing as well.

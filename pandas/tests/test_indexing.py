@@ -373,8 +373,8 @@ class TestIndexing(tm.TestCase):
 
         df = s.to_frame()
         result = df.iloc[2]
-        expected = Series(2,index=[0])
-        assert_series_equal(result,expected)
+        expected = Series(2, index=[0], name=2)
+        assert_series_equal(result, expected)
 
         result = df.iat[2,0]
         expected = 2
@@ -410,6 +410,12 @@ class TestIndexing(tm.TestCase):
         with tm.assertRaisesRegexp(IndexError, 'single positional indexer is out-of-bounds'):
             df.iloc[30]
         self.assertRaises(IndexError, lambda : df.iloc[-30])
+
+        # GH10779
+        # single positive/negative indexer exceeding Series bounds should raise an IndexError
+        with tm.assertRaisesRegexp(IndexError, 'single positional indexer is out-of-bounds'):
+            s.iloc[30]
+        self.assertRaises(IndexError, lambda : s.iloc[-30])
 
         # slices are ok
         result = df.iloc[:,4:10]  # 0 < start < len < stop
@@ -471,7 +477,6 @@ class TestIndexing(tm.TestCase):
         self.assertRaises(IndexError, lambda : dfl.iloc[[4,5,6]])
         self.assertRaises(IndexError, lambda : dfl.iloc[:,4])
 
-
     def test_iloc_getitem_int(self):
 
         # integer
@@ -497,6 +502,33 @@ class TestIndexing(tm.TestCase):
         self.check_result('array int', 'iloc', np.array([2]), 'ix', { 0 : [4], 1 : [6], 2: [8] }, typs = ['ints'])
         self.check_result('array int', 'iloc', np.array([0,1,2]), 'indexer', [0,1,2], typs = ['labels','mixed','ts','floats','empty'], fails = IndexError)
 
+    def test_iloc_getitem_neg_int_can_reach_first_index(self):
+        # GH10547 and GH10779
+        # negative integers should be able to reach index 0
+        df = DataFrame({'A': [2, 3, 5], 'B': [7, 11, 13]})
+        s = df['A']
+
+        expected = df.iloc[0]
+        result = df.iloc[-3]
+        assert_series_equal(result, expected)
+
+        expected = df.iloc[[0]]
+        result = df.iloc[[-3]]
+        assert_frame_equal(result, expected)
+
+        expected = s.iloc[0]
+        result = s.iloc[-3]
+        self.assertEqual(result, expected)
+
+        expected = s.iloc[[0]]
+        result = s.iloc[[-3]]
+        assert_series_equal(result, expected)
+
+        # check the length 1 Series case highlighted in GH10547
+        expected = pd.Series(['a'], index=['A'])
+        result = expected.iloc[[-1]]
+        assert_series_equal(result, expected)
+
     def test_iloc_getitem_dups(self):
 
         # no dups in panel (bug?)
@@ -512,7 +544,7 @@ class TestIndexing(tm.TestCase):
         self.assertTrue(isnull(result))
 
         result = df.iloc[0,:]
-        expected = Series([np.nan,1,3,3],index=['A','B','A','B'])
+        expected = Series([np.nan, 1, 3, 3], index=['A','B','A','B'], name=0)
         assert_series_equal(result,expected)
 
     def test_iloc_getitem_array(self):
@@ -559,16 +591,17 @@ class TestIndexing(tm.TestCase):
 
     def test_iloc_getitem_multiindex(self):
 
-        df = DataFrame(np.random.randn(3, 3),
+        arr = np.random.randn(3, 3)
+        df = DataFrame(arr,
                        columns=[[2,2,4],[6,8,10]],
                        index=[[4,4,8],[8,10,12]])
 
         rs = df.iloc[2]
-        xp = df.irow(2)
+        xp = Series(arr[2],index=df.columns)
         assert_series_equal(rs, xp)
 
         rs = df.iloc[:,2]
-        xp = df.icol(2)
+        xp = Series(arr[:, 2],index=df.index)
         assert_series_equal(rs, xp)
 
         rs = df.iloc[2,2]
@@ -813,8 +846,8 @@ class TestIndexing(tm.TestCase):
         # GH6394
         # Regression in chained getitem indexing with embedded list-like from 0.12
         def check(result, expected):
-            self.assert_numpy_array_equal(result,expected)
-            tm.assert_isinstance(result, np.ndarray)
+            tm.assert_numpy_array_equal(result,expected)
+            tm.assertIsInstance(result, np.ndarray)
 
 
         df = DataFrame({'A': 5*[np.zeros(3)], 'B':5*[np.ones(3)]})
@@ -1021,8 +1054,8 @@ class TestIndexing(tm.TestCase):
 
         # mixed type
         result = DataFrame({ 'a' : [Timestamp('20130101')], 'b' : [1] }).iloc[0]
-        expected = Series([ Timestamp('20130101'), 1],index=['a','b'])
-        assert_series_equal(result,expected)
+        expected = Series([ Timestamp('20130101'), 1], index=['a','b'], name=0)
+        assert_series_equal(result, expected)
         self.assertEqual(result.dtype, object)
 
     def test_loc_setitem_consistency(self):
@@ -1063,6 +1096,7 @@ class TestIndexing(tm.TestCase):
 
         # empty (essentially noops)
         expected = DataFrame(columns=['x', 'y'])
+        expected['x'] = expected['x'].astype(np.int64)
         df = DataFrame(columns=['x', 'y'])
         df.loc[:, 'x'] = 1
         assert_frame_equal(df,expected)
@@ -1070,6 +1104,25 @@ class TestIndexing(tm.TestCase):
         df = DataFrame(columns=['x', 'y'])
         df['x'] = 1
         assert_frame_equal(df,expected)
+
+        # .loc[:,column] setting with slice == len of the column
+        # GH10408
+        data = """Level_0,,,Respondent,Respondent,Respondent,OtherCat,OtherCat
+Level_1,,,Something,StartDate,EndDate,Yes/No,SomethingElse
+Region,Site,RespondentID,,,,,
+Region_1,Site_1,3987227376,A,5/25/2015 10:59,5/25/2015 11:22,Yes,
+Region_1,Site_1,3980680971,A,5/21/2015 9:40,5/21/2015 9:52,Yes,Yes
+Region_1,Site_2,3977723249,A,5/20/2015 8:27,5/20/2015 8:41,Yes,
+Region_1,Site_2,3977723089,A,5/20/2015 8:33,5/20/2015 9:09,Yes,No"""
+
+        df = pd.read_csv(StringIO(data),header=[0,1], index_col=[0,1,2])
+        df.loc[:,('Respondent','StartDate')] = pd.to_datetime(df.loc[:,('Respondent','StartDate')])
+        df.loc[:,('Respondent','EndDate')] = pd.to_datetime(df.loc[:,('Respondent','EndDate')])
+        df.loc[:,('Respondent','Duration')] = df.loc[:,('Respondent','EndDate')] - df.loc[:,('Respondent','StartDate')]
+
+        df.loc[:,('Respondent','Duration')] = df.loc[:,('Respondent','Duration')].astype('timedelta64[s]')
+        expected = Series([1380,720,840,2160.],index=df.index,name=('Respondent','Duration'))
+        assert_series_equal(df[('Respondent','Duration')],expected)
 
     def test_loc_setitem_frame(self):
         df = self.frame_labels
@@ -1125,12 +1178,12 @@ class TestIndexing(tm.TestCase):
         # setting with mixed labels
         df = DataFrame({1:[1,2],2:[3,4],'a':['a','b']})
 
-        result = df.loc[0,[1,2]]
-        expected = Series([1,3],index=[1,2],dtype=object)
-        assert_series_equal(result,expected)
+        result = df.loc[0, [1,2]]
+        expected = Series([1,3],index=[1,2],dtype=object, name=0)
+        assert_series_equal(result, expected)
 
         expected = DataFrame({1:[5,2],2:[6,4],'a':['a','b']})
-        df.loc[0,[1,2]] = [5,6]
+        df.loc[0, [1,2]] = [5,6]
         assert_frame_equal(df, expected)
 
     def test_loc_setitem_frame_multiples(self):
@@ -1403,8 +1456,8 @@ class TestIndexing(tm.TestCase):
         df.ix[2:5, 'bar'] = np.array([2.33j, 1.23+0.1j, 2.2, 1.0])
 
         result = df.ix[2:5, 'bar']
-        expected = Series([2.33j, 1.23+0.1j, 2.2, 1.0],index=[2,3,4,5])
-        assert_series_equal(result,expected)
+        expected = Series([2.33j, 1.23+0.1j, 2.2, 1.0], index=[2,3,4,5], name='bar')
+        assert_series_equal(result, expected)
 
         # dtype getting changed?
         df = DataFrame(index=Index(lrange(1,11)))
@@ -1438,6 +1491,13 @@ class TestIndexing(tm.TestCase):
         result = s.iloc[:4]
         assert_series_equal(result, expected)
 
+        s= Series([-1]*6)
+        s.iloc[0::2]= [0,2,4]
+        s.iloc[1::2]= [1,3,5]
+        result  = s
+        expected= Series([0,1,2,3,4,5])
+        assert_series_equal(result, expected)
+
     def test_iloc_setitem_list_of_lists(self):
 
         # GH 7551
@@ -1465,7 +1525,9 @@ class TestIndexing(tm.TestCase):
         # the first row
         rs = mi_int.iloc[0]
         xp = mi_int.ix[4].ix[8]
-        assert_series_equal(rs, xp)
+        assert_series_equal(rs, xp, check_names=False)
+        self.assertEqual(rs.name, (4, 8))
+        self.assertEqual(xp.name, 8)
 
         # 2nd (last) columns
         rs = mi_int.iloc[:,2]
@@ -1636,7 +1698,7 @@ class TestIndexing(tm.TestCase):
 
         for frame in a, b:
             for i in range(5):  # lexsort depth
-                df = frame.copy() if i == 0 else frame.sort(columns=cols[:i])
+                df = frame.copy() if i == 0 else frame.sort_values(by=cols[:i])
                 mi = df.set_index(cols[:-1])
                 assert not mi.index.lexsort_depth < i
                 loop(mi, df, keys)
@@ -1699,7 +1761,8 @@ class TestIndexing(tm.TestCase):
         key = 4.0, 2012
 
         # emits a PerformanceWarning, ok
-        tm.assert_frame_equal(df.ix[key], df.iloc[2:])
+        with self.assert_produces_warning(PerformanceWarning):
+            tm.assert_frame_equal(df.ix[key], df.iloc[2:])
 
         # this is ok
         df.sortlevel(inplace=True)
@@ -2283,6 +2346,7 @@ class TestIndexing(tm.TestCase):
                              index=pd.MultiIndex.from_product([['A','B','C'],['foo']],
                                                               names=['one','two'])
                              ).sortlevel()
+
         result = s.loc[idx[:,['foo']]]
         assert_series_equal(result,expected)
         result = s.loc[idx[:,['foo','bah']]]
@@ -2294,9 +2358,9 @@ class TestIndexing(tm.TestCase):
         df = DataFrame(np.random.randn(5, 6), index=range(5), columns=multi_index)
         df = df.sortlevel(0, axis=1)
 
+        expected = DataFrame(index=range(5),columns=multi_index.reindex([])[0])
         result1 = df.loc[:, ([], slice(None))]
         result2 = df.loc[:, (['foo'], [])]
-        expected = DataFrame(index=range(5),columns=multi_index.reindex([])[0])
         assert_frame_equal(result1, expected)
         assert_frame_equal(result2, expected)
 
@@ -2319,6 +2383,35 @@ class TestIndexing(tm.TestCase):
         df.ix[0,'c'] = 'foo'
         expected = DataFrame([{"a": 1, "c" : 'foo'}, {"a": 3, "b": 2, "c" : np.nan}])
         assert_frame_equal(df,expected)
+
+        # GH10280
+        df = DataFrame(np.arange(6,dtype='int64').reshape(2, 3),
+                       index=list('ab'),
+                       columns=['foo', 'bar', 'baz'])
+
+        for val in [3.14, 'wxyz']:
+            left = df.copy()
+            left.loc['a', 'bar'] = val
+            right = DataFrame([[0, val, 2], [3, 4, 5]],
+                              index=list('ab'),
+                              columns=['foo', 'bar', 'baz'])
+
+            assert_frame_equal(left, right)
+            self.assertTrue(com.is_integer_dtype(left['foo']))
+            self.assertTrue(com.is_integer_dtype(left['baz']))
+
+        left = DataFrame(np.arange(6,dtype='int64').reshape(2, 3) / 10.0,
+                         index=list('ab'),
+                         columns=['foo', 'bar', 'baz'])
+        left.loc['a', 'bar'] = 'wxyz'
+
+        right = DataFrame([[0, 'wxyz', .2], [.3, .4, .5]],
+                          index=list('ab'),
+                          columns=['foo', 'bar', 'baz'])
+
+        assert_frame_equal(left, right)
+        self.assertTrue(com.is_float_dtype(left['foo']))
+        self.assertTrue(com.is_float_dtype(left['baz']))
 
     def test_setitem_iloc(self):
 
@@ -2366,6 +2459,7 @@ class TestIndexing(tm.TestCase):
 
         rows = ['C','B','E']
         expected = DataFrame({'test' : [11,9,np.nan], 'test1': [7.,6,np.nan], 'other': ['d','c',np.nan]},index=rows)
+
         result = df.ix[rows]
         assert_frame_equal(result, expected)
 
@@ -2558,6 +2652,44 @@ class TestIndexing(tm.TestCase):
             p.loc[idx,:,:] = replace
         tm.assert_panel_equal(p, expected)
 
+
+    def test_panel_setitem_with_multiindex(self):
+
+        # 10360
+        # failing with a multi-index
+        arr = np.array([[[1,2,3],[0,0,0]],[[0,0,0],[0,0,0]]],dtype=np.float64)
+
+        # reg index
+        axes = dict(items=['A', 'B'], major_axis=[0, 1], minor_axis=['X', 'Y' ,'Z'])
+        p1 = Panel(0., **axes)
+        p1.iloc[0, 0, :] = [1, 2, 3]
+        expected = Panel(arr, **axes)
+        tm.assert_panel_equal(p1, expected)
+
+        # multi-indexes
+        axes['items'] = pd.MultiIndex.from_tuples([('A','a'), ('B','b')])
+        p2 = Panel(0., **axes)
+        p2.iloc[0, 0, :] = [1, 2, 3]
+        expected = Panel(arr, **axes)
+        tm.assert_panel_equal(p2, expected)
+
+        axes['major_axis']=pd.MultiIndex.from_tuples([('A',1),('A',2)])
+        p3 = Panel(0., **axes)
+        p3.iloc[0, 0, :] = [1, 2, 3]
+        expected = Panel(arr, **axes)
+        tm.assert_panel_equal(p3, expected)
+
+        axes['minor_axis']=pd.MultiIndex.from_product([['X'],range(3)])
+        p4 = Panel(0., **axes)
+        p4.iloc[0, 0, :] = [1, 2, 3]
+        expected = Panel(arr, **axes)
+        tm.assert_panel_equal(p4, expected)
+
+        arr = np.array([[[1,0,0],[2,0,0]],[[0,0,0],[0,0,0]]],dtype=np.float64)
+        p5 = Panel(0., **axes)
+        p5.iloc[0, :, 0] = [1, 2]
+        expected = Panel(arr, **axes)
+        tm.assert_panel_equal(p5, expected)
 
     def test_panel_assignment(self):
 
@@ -2865,7 +2997,7 @@ class TestIndexing(tm.TestCase):
         self.assertRaises(KeyError, df.loc.__getitem__, tuple([slice(1,2)]))
 
         # monotonic are ok
-        df = DataFrame({'A' : [1,2,3,4,5,6], 'B' : [3,4,5,6,7,8]}, index = [0,1,0,1,2,3]).sort(axis=0)
+        df = DataFrame({'A' : [1,2,3,4,5,6], 'B' : [3,4,5,6,7,8]}, index = [0,1,0,1,2,3]).sort_index(axis=0)
         result = df.loc[1:]
         expected = DataFrame({'A' : [2,4,5,6], 'B' : [4, 6,7,8]}, index = [1,1,2,3])
         assert_frame_equal(result,expected)
@@ -2946,14 +3078,14 @@ class TestIndexing(tm.TestCase):
         # GH 4146, not returning a block manager when selecting a unique index
         # from a duplicate index
         # as of 4879, this returns a Series (which is similar to what happens with a non-unique)
-        expected = Series(['a',1,1],index=['h1','h3','h5'])
+        expected = Series(['a',1,1], index=['h1','h3','h5'], name='A1')
         result = df2['A']['A1']
-        assert_series_equal(result,expected)
+        assert_series_equal(result, expected)
 
         # selecting a non_unique from the 2nd level
         expected = DataFrame([['d',4,4],['e',5,5]],index=Index(['B2','B2'],name='sub'),columns=['h1','h3','h5'],).T
         result = df2['A']['B2']
-        assert_frame_equal(result,expected)
+        assert_frame_equal(result, expected)
 
     def test_non_unique_loc_memory_error(self):
 
@@ -3000,7 +3132,8 @@ class TestIndexing(tm.TestCase):
         assert_frame_equal(df,expected)
 
         df = df_orig.copy()
-        df.iloc[:,0:2] = df.iloc[:,0:2].convert_objects(convert_numeric=True)
+        df.iloc[:,0:2] = df.iloc[:,0:2].convert_objects(datetime=True,
+                                                        numeric=True)
         expected =  DataFrame([[1,2,'3','.4',5,6.,'foo']],columns=list('ABCDEFG'))
         assert_frame_equal(df,expected)
 
@@ -3048,15 +3181,16 @@ class TestIndexing(tm.TestCase):
 
         # GH4726
         # dup indexing with iloc/loc
-        df = DataFrame([[1,2,'foo','bar',Timestamp('20130101')]],
-                       columns=['a','a','a','a','a'],index=[1])
-        expected = Series([1,2,'foo','bar',Timestamp('20130101')],index=['a','a','a','a','a'])
+        df = DataFrame([[1, 2, 'foo', 'bar', Timestamp('20130101')]],
+                       columns=['a','a','a','a','a'], index=[1])
+        expected = Series([1, 2, 'foo', 'bar', Timestamp('20130101')],
+                          index=['a','a','a','a','a'], name=1)
 
         result = df.iloc[0]
-        assert_series_equal(result,expected)
+        assert_series_equal(result, expected)
 
         result = df.loc[1]
-        assert_series_equal(result,expected)
+        assert_series_equal(result, expected)
 
     def test_partial_setting(self):
 
@@ -3368,7 +3502,7 @@ class TestIndexing(tm.TestCase):
         expected = DataFrame(columns=['foo'])
         def f():
             df = DataFrame()
-            df['foo'] = Series([])
+            df['foo'] = Series([], dtype='object')
             return df
         assert_frame_equal(f(), expected)
         def f():
@@ -3378,9 +3512,12 @@ class TestIndexing(tm.TestCase):
         assert_frame_equal(f(), expected)
         def f():
             df = DataFrame()
-            df['foo'] = Series(range(len(df)))
+            df['foo'] = df.index
             return df
         assert_frame_equal(f(), expected)
+
+        expected = DataFrame(columns=['foo'])
+        expected['foo'] = expected['foo'].astype('float64')
         def f():
             df = DataFrame()
             df['foo'] = []
@@ -3388,7 +3525,7 @@ class TestIndexing(tm.TestCase):
         assert_frame_equal(f(), expected)
         def f():
             df = DataFrame()
-            df['foo'] = df.index
+            df['foo'] = Series(range(len(df)))
             return df
         assert_frame_equal(f(), expected)
         def f():
@@ -3421,14 +3558,21 @@ class TestIndexing(tm.TestCase):
 
         # GH5720, GH5744
         # don't create rows when empty
+        expected = DataFrame(columns=['A','B','New'])
+        expected['A'] = expected['A'].astype('int64')
+        expected['B'] = expected['B'].astype('float64')
+        expected['New'] = expected['New'].astype('float64')
         df = DataFrame({"A": [1, 2, 3], "B": [1.2, 4.2, 5.2]})
         y = df[df.A > 5]
         y['New'] = np.nan
-        assert_frame_equal(y,DataFrame(columns=['A','B','New']))
+        assert_frame_equal(y,expected)
+        #assert_frame_equal(y,expected)
 
+        expected = DataFrame(columns=['a','b','c c','d'])
+        expected['d'] = expected['d'].astype('int64')
         df = DataFrame(columns=['a', 'b', 'c c'])
         df['d'] = 3
-        assert_frame_equal(df,DataFrame(columns=['a','b','c c','d']))
+        assert_frame_equal(df,expected)
         assert_series_equal(df['c c'],Series(name='c c',dtype=object))
 
         # reindex columns is ok
@@ -3436,6 +3580,9 @@ class TestIndexing(tm.TestCase):
         y = df[df.A > 5]
         result = y.reindex(columns=['A','B','C'])
         expected = DataFrame(columns=['A','B','C'])
+        expected['A'] = expected['A'].astype('int64')
+        expected['B'] = expected['B'].astype('float64')
+        expected['C'] = expected['C'].astype('float64')
         assert_frame_equal(result,expected)
 
         # GH 5756
@@ -3504,6 +3651,18 @@ class TestIndexing(tm.TestCase):
         df.loc[(0,0),'z'] = 2
         result = df.loc[(0,0),'z']
         self.assertEqual(result, 2)
+
+        # 10264
+        df = DataFrame(np.zeros((5,5),dtype='int64'),columns=['a','b','c','d','e'],index=range(5))
+        df['f'] = 0
+        df.f.values[3] = 1
+        y = df.iloc[np.arange(2,len(df))]
+        df.f.values[3] = 2
+        expected = DataFrame(np.zeros((5,6),dtype='int64'),columns=['a','b','c','d','e','f'],index=range(5))
+        expected.at[3,'f'] = 2
+        assert_frame_equal(df, expected)
+        expected = Series([0,0,0,2,0],name='f')
+        assert_series_equal(df.f, expected)
 
     def test_slice_consolidate_invalidate_item_cache(self):
 
@@ -3746,10 +3905,9 @@ class TestIndexing(tm.TestCase):
         self.assertRaises(com.SettingWithCopyError, f)
 
         df = DataFrame(np.random.randn(10,4))
-        s = df.iloc[:,0]
-        s = s.order()
-        assert_series_equal(s,df.iloc[:,0].order())
-        assert_series_equal(s,df[0].order())
+        s = df.iloc[:,0].sort_values()
+        assert_series_equal(s,df.iloc[:,0].sort_values())
+        assert_series_equal(s,df[0].sort_values())
 
         # false positives GH6025
         df = DataFrame ({'column1':['a', 'a', 'a'], 'column2': [4,8,9] })
@@ -4016,9 +4174,12 @@ class TestIndexing(tm.TestCase):
 
         def check_iloc_compat(s):
             # invalid type for iloc (but works with a warning)
-            self.assert_produces_warning(FutureWarning, lambda : s.iloc[6.0:8])
-            self.assert_produces_warning(FutureWarning, lambda : s.iloc[6.0:8.0])
-            self.assert_produces_warning(FutureWarning, lambda : s.iloc[6:8.0])
+            with self.assert_produces_warning(FutureWarning):
+                s.iloc[6.0:8]
+            with self.assert_produces_warning(FutureWarning):
+                s.iloc[6.0:8.0]
+            with self.assert_produces_warning(FutureWarning):
+                s.iloc[6:8.0]
 
         def check_slicing_positional(index):
 
@@ -4411,6 +4572,250 @@ class TestIndexing(tm.TestCase):
         self.assertRaisesRegexp(ValueError, 'slice step cannot be zero',
                                 lambda: s.ix[::0])
 
+    def test_indexing_assignment_dict_already_exists(self):
+        df = pd.DataFrame({'x': [1, 2, 6],
+                           'y': [2, 2, 8],
+                           'z': [-5, 0, 5]}).set_index('z')
+        expected = df.copy()
+        rhs = dict(x=9, y=99)
+        df.loc[5] = rhs
+        expected.loc[5] = [9, 99]
+        tm.assert_frame_equal(df, expected)
+
+    def test_indexing_dtypes_on_empty(self):
+        # Check that .iloc and .ix return correct dtypes GH9983
+        df = DataFrame({'a':[1,2,3],'b':['b','b2','b3']})
+        df2 = df.ix[[],:]
+
+        self.assertEqual(df2.loc[:,'a'].dtype, np.int64)
+        assert_series_equal(df2.loc[:,'a'], df2.iloc[:,0])
+        assert_series_equal(df2.loc[:,'a'], df2.ix[:,0])
+
+
+
+class TestCategoricalIndex(tm.TestCase):
+
+    def setUp(self):
+
+        self.df = DataFrame({'A' : np.arange(6,dtype='int64'),
+                             'B' : Series(list('aabbca')).astype('category',categories=list('cab')) }).set_index('B')
+        self.df2 = DataFrame({'A' : np.arange(6,dtype='int64'),
+                              'B' : Series(list('aabbca')).astype('category',categories=list('cabe')) }).set_index('B')
+        self.df3 = DataFrame({'A' : np.arange(6,dtype='int64'),
+                              'B' : Series([1,1,2,1,3,2]).astype('category',categories=[3,2,1],ordered=True) }).set_index('B')
+        self.df4 = DataFrame({'A' : np.arange(6,dtype='int64'),
+                              'B' : Series([1,1,2,1,3,2]).astype('category',categories=[3,2,1],ordered=False) }).set_index('B')
+
+
+    def test_loc_scalar(self):
+
+        result = self.df.loc['a']
+        expected = DataFrame({'A' : [0,1,5],
+                              'B' : Series(list('aaa')).astype('category',categories=list('cab')) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+
+        df = self.df.copy()
+        df.loc['a'] = 20
+        expected = DataFrame({'A' : [20,20,2,3,4,20],
+                              'B' : Series(list('aabbca')).astype('category',categories=list('cab')) }).set_index('B')
+        assert_frame_equal(df, expected)
+
+        # value not in the categories
+        self.assertRaises(KeyError, lambda : df.loc['d'])
+
+        def f():
+            df.loc['d'] = 10
+        self.assertRaises(TypeError, f)
+
+        def f():
+            df.loc['d','A'] = 10
+        self.assertRaises(TypeError, f)
+
+        def f():
+            df.loc['d','C'] = 10
+        self.assertRaises(TypeError, f)
+
+    def test_loc_listlike(self):
+
+        # list of labels
+        result = self.df.loc[['c','a']]
+        expected = self.df.iloc[[4,0,1,5]]
+        assert_frame_equal(result, expected)
+
+        result = self.df2.loc[['a','b','e']]
+        expected = DataFrame({'A' : [0,1,5,2,3,np.nan],
+                              'B' : Series(list('aaabbe')).astype('category',categories=list('cabe')) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        # element in the categories but not in the values
+        self.assertRaises(KeyError, lambda : self.df2.loc['e'])
+
+        # assign is ok
+        df = self.df2.copy()
+        df.loc['e'] = 20
+        result = df.loc[['a','b','e']]
+        expected = DataFrame({'A' : [0,1,5,2,3,20],
+                              'B' : Series(list('aaabbe')).astype('category',categories=list('cabe')) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        df = self.df2.copy()
+        result = df.loc[['a','b','e']]
+        expected = DataFrame({'A' : [0,1,5,2,3,np.nan],
+                              'B' : Series(list('aaabbe')).astype('category',categories=list('cabe')) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+
+        # not all labels in the categories
+        self.assertRaises(KeyError, lambda : self.df2.loc[['a','d']])
+
+    def test_read_only_source(self):
+        # GH 10043
+        rw_array = np.eye(10)
+        rw_df = DataFrame(rw_array)
+
+        ro_array = np.eye(10)
+        ro_array.setflags(write=False)
+        ro_df = DataFrame(ro_array)
+
+        assert_frame_equal(rw_df.iloc[[1,2,3]],ro_df.iloc[[1,2,3]])
+        assert_frame_equal(rw_df.iloc[[1]],ro_df.iloc[[1]])
+        assert_series_equal(rw_df.iloc[1],ro_df.iloc[1])
+        assert_frame_equal(rw_df.iloc[1:3],ro_df.iloc[1:3])
+
+        assert_frame_equal(rw_df.loc[[1,2,3]],ro_df.loc[[1,2,3]])
+        assert_frame_equal(rw_df.loc[[1]],ro_df.loc[[1]])
+        assert_series_equal(rw_df.loc[1],ro_df.loc[1])
+        assert_frame_equal(rw_df.loc[1:3],ro_df.loc[1:3])
+
+    def test_reindexing(self):
+
+        # reindexing
+        # convert to a regular index
+        result = self.df2.reindex(['a','b','e'])
+        expected = DataFrame({'A' : [0,1,5,2,3,np.nan],
+                              'B' : Series(list('aaabbe')) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        result = self.df2.reindex(['a','b'])
+        expected = DataFrame({'A' : [0,1,5,2,3],
+                              'B' : Series(list('aaabb')) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        result = self.df2.reindex(['e'])
+        expected = DataFrame({'A' : [np.nan],
+                              'B' : Series(['e']) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        result = self.df2.reindex(['d'])
+        expected = DataFrame({'A' : [np.nan],
+                              'B' : Series(['d']) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        # since we are actually reindexing with a Categorical
+        # then return a Categorical
+        cats = list('cabe')
+
+        result = self.df2.reindex(pd.Categorical(['a','d'],categories=cats))
+        expected = DataFrame({'A' : [0,1,5,np.nan],
+                              'B' : Series(list('aaad')).astype('category',categories=cats) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        result = self.df2.reindex(pd.Categorical(['a'],categories=cats))
+        expected = DataFrame({'A' : [0,1,5],
+                              'B' : Series(list('aaa')).astype('category',categories=cats) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        result = self.df2.reindex(['a','b','e'])
+        expected = DataFrame({'A' : [0,1,5,2,3,np.nan],
+                              'B' : Series(list('aaabbe')) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        result = self.df2.reindex(['a','b'])
+        expected = DataFrame({'A' : [0,1,5,2,3],
+                              'B' : Series(list('aaabb')) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        result = self.df2.reindex(['e'])
+        expected = DataFrame({'A' : [np.nan],
+                              'B' : Series(['e']) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        # give back the type of categorical that we received
+        result = self.df2.reindex(pd.Categorical(['a','d'],categories=cats,ordered=True))
+        expected = DataFrame({'A' : [0,1,5,np.nan],
+                              'B' : Series(list('aaad')).astype('category',categories=cats,ordered=True) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        result = self.df2.reindex(pd.Categorical(['a','d'],categories=['a','d']))
+        expected = DataFrame({'A' : [0,1,5,np.nan],
+                              'B' : Series(list('aaad')).astype('category',categories=['a','d']) }).set_index('B')
+        assert_frame_equal(result, expected)
+
+        # passed duplicate indexers are not allowed
+        self.assertRaises(ValueError, lambda : self.df2.reindex(['a','a']))
+
+        # args NotImplemented ATM
+        self.assertRaises(NotImplementedError, lambda : self.df2.reindex(['a'],method='ffill'))
+        self.assertRaises(NotImplementedError, lambda : self.df2.reindex(['a'],level=1))
+        self.assertRaises(NotImplementedError, lambda : self.df2.reindex(['a'],limit=2))
+
+    def test_loc_slice(self):
+
+        # slicing
+        # not implemented ATM
+        # GH9748
+
+        self.assertRaises(TypeError, lambda : self.df.loc[1:5])
+
+        #result = df.loc[1:5]
+        #expected = df.iloc[[1,2,3,4]]
+        #assert_frame_equal(result, expected)
+
+    def test_boolean_selection(self):
+
+        df3 = self.df3
+        df4 = self.df4
+
+        result = df3[df3.index == 'a']
+        expected = df3.iloc[[]]
+        assert_frame_equal(result,expected)
+
+        result = df4[df4.index == 'a']
+        expected = df4.iloc[[]]
+        assert_frame_equal(result,expected)
+
+        result = df3[df3.index == 1]
+        expected = df3.iloc[[0,1,3]]
+        assert_frame_equal(result,expected)
+
+        result = df4[df4.index == 1]
+        expected = df4.iloc[[0,1,3]]
+        assert_frame_equal(result,expected)
+
+        # since we have an ordered categorical
+
+        # CategoricalIndex([1, 1, 2, 1, 3, 2],
+        #         categories=[3, 2, 1],
+        #         ordered=True,
+        #         name=u'B')
+        result = df3[df3.index < 2]
+        expected = df3.iloc[[4]]
+        assert_frame_equal(result,expected)
+
+        result = df3[df3.index > 1]
+        expected = df3.iloc[[]]
+        assert_frame_equal(result,expected)
+
+        # unordered
+        # cannot be compared
+
+        # CategoricalIndex([1, 1, 2, 1, 3, 2],
+        #         categories=[3, 2, 1],
+        #         ordered=False,
+        #         name=u'B')
+        self.assertRaises(TypeError, lambda : df4[df4.index < 2])
+        self.assertRaises(TypeError, lambda : df4[df4.index > 1])
 
 class TestSeriesNoneCoercion(tm.TestCase):
     EXPECTED_RESULTS = [
@@ -4434,7 +4839,7 @@ class TestSeriesNoneCoercion(tm.TestCase):
             expected_series = Series(expected_result)
 
             assert_attr_equal('dtype', start_series, expected_series)
-            self.assert_numpy_array_equivalent(
+            tm.assert_numpy_array_equal(
                 start_series.values,
                 expected_series.values, strict_nan=True)
 
@@ -4446,7 +4851,7 @@ class TestSeriesNoneCoercion(tm.TestCase):
             expected_series = Series(expected_result)
 
             assert_attr_equal('dtype', start_series, expected_series)
-            self.assert_numpy_array_equivalent(
+            tm.assert_numpy_array_equal(
                 start_series.values,
                 expected_series.values, strict_nan=True)
 
@@ -4458,7 +4863,7 @@ class TestSeriesNoneCoercion(tm.TestCase):
             expected_series = Series(expected_result)
 
             assert_attr_equal('dtype', start_series, expected_series)
-            self.assert_numpy_array_equivalent(
+            tm.assert_numpy_array_equal(
                 start_series.values,
                 expected_series.values, strict_nan=True)
 
@@ -4470,7 +4875,7 @@ class TestSeriesNoneCoercion(tm.TestCase):
             expected_series = Series(expected_result)
 
             assert_attr_equal('dtype', start_series, expected_series)
-            self.assert_numpy_array_equivalent(
+            tm.assert_numpy_array_equal(
                 start_series.values,
                 expected_series.values, strict_nan=True)
 
@@ -4497,7 +4902,7 @@ class TestDataframeNoneCoercion(tm.TestCase):
             expected_dataframe = DataFrame({'foo': expected_result})
 
             assert_attr_equal('dtype', start_dataframe['foo'], expected_dataframe['foo'])
-            self.assert_numpy_array_equivalent(
+            tm.assert_numpy_array_equal(
                 start_dataframe['foo'].values,
                 expected_dataframe['foo'].values, strict_nan=True)
 
@@ -4509,7 +4914,7 @@ class TestDataframeNoneCoercion(tm.TestCase):
             expected_dataframe = DataFrame({'foo': expected_result})
 
             assert_attr_equal('dtype', start_dataframe['foo'], expected_dataframe['foo'])
-            self.assert_numpy_array_equivalent(
+            tm.assert_numpy_array_equal(
                 start_dataframe['foo'].values,
                 expected_dataframe['foo'].values, strict_nan=True)
 
@@ -4521,7 +4926,7 @@ class TestDataframeNoneCoercion(tm.TestCase):
             expected_dataframe = DataFrame({'foo': expected_result})
 
             assert_attr_equal('dtype', start_dataframe['foo'], expected_dataframe['foo'])
-            self.assert_numpy_array_equivalent(
+            tm.assert_numpy_array_equal(
                 start_dataframe['foo'].values,
                 expected_dataframe['foo'].values, strict_nan=True)
 
@@ -4541,7 +4946,7 @@ class TestDataframeNoneCoercion(tm.TestCase):
 
         for column in expected_dataframe.columns:
             assert_attr_equal('dtype', start_dataframe[column], expected_dataframe[column])
-            self.assert_numpy_array_equivalent(
+            tm.assert_numpy_array_equal(
                 start_dataframe[column].values,
                 expected_dataframe[column].values, strict_nan=True)
 

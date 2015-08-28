@@ -9,9 +9,12 @@ import numpy as np
 from pandas.core.series import Series
 from pandas.core.frame import DataFrame
 
+from pandas.core.sparse import SparseDataFrame, SparseSeries
+from pandas.sparse.array import SparseArray
+from pandas._sparse import IntIndex
+
 from pandas.core.categorical import Categorical
-from pandas.core.common import (notnull, _ensure_platform_int, _maybe_promote,
-                                isnull)
+from pandas.core.common import notnull, _ensure_platform_int, _maybe_promote
 from pandas.core.groupby import get_group_index, _compress_group_index
 
 import pandas.core.common as com
@@ -316,11 +319,17 @@ def pivot(self, index=None, columns=None, values=None):
     See DataFrame.pivot
     """
     if values is None:
-        indexed = self.set_index([index, columns])
+        cols = [columns] if index is None else [index, columns]
+        append = index is None
+        indexed = self.set_index(cols, append=append)
         return indexed.unstack(columns)
     else:
+        if index is None:
+            index = self.index
+        else:
+            index = self[index]
         indexed = Series(self[values].values,
-                         index=MultiIndex.from_arrays([self[index],
+                         index=MultiIndex.from_arrays([index,
                                                        self[columns]]))
         return indexed.unstack(columns)
 
@@ -452,6 +461,12 @@ def stack(frame, level=-1, dropna=True):
     -------
     stacked : Series
     """
+    def factorize(index):
+        if index.is_unique:
+            return index, np.arange(len(index))
+        cat = Categorical(index, ordered=True)
+        return cat.categories, cat.codes
+
     N, K = frame.shape
     if isinstance(frame.columns, MultiIndex):
         if frame.columns._reference_duplicate_name(level):
@@ -466,20 +481,22 @@ def stack(frame, level=-1, dropna=True):
         return _stack_multi_columns(frame, level_num=level_num, dropna=dropna)
     elif isinstance(frame.index, MultiIndex):
         new_levels = list(frame.index.levels)
-        new_levels.append(frame.columns)
-
         new_labels = [lab.repeat(K) for lab in frame.index.labels]
-        new_labels.append(np.tile(np.arange(K), N).ravel())
+
+        clev, clab = factorize(frame.columns)
+        new_levels.append(clev)
+        new_labels.append(np.tile(clab, N).ravel())
 
         new_names = list(frame.index.names)
         new_names.append(frame.columns.name)
         new_index = MultiIndex(levels=new_levels, labels=new_labels,
                                names=new_names, verify_integrity=False)
     else:
-        ilabels = np.arange(N).repeat(K)
-        clabels = np.tile(np.arange(K), N).ravel()
-        new_index = MultiIndex(levels=[frame.index, frame.columns],
-                               labels=[ilabels, clabels],
+        levels, (ilab, clab) = \
+                zip(*map(factorize, (frame.index, frame.columns)))
+        labels = ilab.repeat(K), np.tile(clab, N).ravel()
+        new_index = MultiIndex(levels=levels,
+                               labels=labels,
                                names=[frame.index.name, frame.columns.name],
                                verify_integrity=False)
 
@@ -608,7 +625,7 @@ def _stack_multi_columns(frame, level_num=-1, dropna=True):
         new_data[key] = value_slice.ravel()
 
     if len(drop_cols) > 0:
-        new_columns = new_columns - drop_cols
+        new_columns = new_columns.difference(drop_cols)
 
     N = len(this)
 
@@ -932,7 +949,7 @@ def wide_to_long(df, stubnames, i, j):
     return newdf.set_index([i, j])
 
 def get_dummies(data, prefix=None, prefix_sep='_', dummy_na=False,
-                columns=None):
+                columns=None, sparse=False):
     """
     Convert categorical variable into dummy/indicator variables
 
@@ -953,10 +970,16 @@ def get_dummies(data, prefix=None, prefix_sep='_', dummy_na=False,
         Column names in the DataFrame to be encoded.
         If `columns` is None then all the columns with
         `object` or `category` dtype will be converted.
+    sparse : bool, default False
+        Whether the dummy columns should be sparse or not.  Returns
+        SparseDataFrame if `data` is a Series or if all columns are included.
+        Otherwise returns a DataFrame with some SparseBlocks.
+
+        .. versionadded:: 0.16.1
 
     Returns
     -------
-    dummies : DataFrame
+    dummies : DataFrame or SparseDataFrame
 
     Examples
     --------
@@ -1035,20 +1058,24 @@ def get_dummies(data, prefix=None, prefix_sep='_', dummy_na=False,
         elif isinstance(prefix_sep, dict):
             prefix_sep = [prefix_sep[col] for col in columns_to_encode]
 
-        result = data.drop(columns_to_encode, axis=1)
-        with_dummies = [result]
+        if set(columns_to_encode) == set(data.columns):
+            with_dummies = []
+        else:
+            with_dummies = [data.drop(columns_to_encode, axis=1)]
+
         for (col, pre, sep) in zip(columns_to_encode, prefix, prefix_sep):
 
-            dummy = _get_dummies_1d(data[col], prefix=pre,
-                                    prefix_sep=sep, dummy_na=dummy_na)
+            dummy = _get_dummies_1d(data[col], prefix=pre, prefix_sep=sep,
+                                    dummy_na=dummy_na, sparse=sparse)
             with_dummies.append(dummy)
         result = concat(with_dummies, axis=1)
     else:
-        result = _get_dummies_1d(data, prefix, prefix_sep, dummy_na)
+        result = _get_dummies_1d(data, prefix, prefix_sep, dummy_na,
+                                 sparse=sparse)
     return result
 
 
-def _get_dummies_1d(data, prefix, prefix_sep='_', dummy_na=False):
+def _get_dummies_1d(data, prefix, prefix_sep='_', dummy_na=False, sparse=False):
     # Series avoids inconsistent NaN handling
     cat = Categorical.from_array(Series(data), ordered=True)
     levels = cat.categories
@@ -1059,19 +1086,17 @@ def _get_dummies_1d(data, prefix, prefix_sep='_', dummy_na=False):
             index = data.index
         else:
             index = np.arange(len(data))
-        return DataFrame(index=index)
+        if not sparse:
+            return DataFrame(index=index)
+        else:
+            return SparseDataFrame(index=index)
+
+    codes = cat.codes.copy()
+    if dummy_na:
+        codes[codes == -1] = len(cat.categories)
+        levels = np.append(cat.categories, np.nan)
 
     number_of_cols = len(levels)
-    if dummy_na:
-        number_of_cols += 1
-
-    dummy_mat = np.eye(number_of_cols).take(cat.codes, axis=0)
-
-    if dummy_na:
-        levels = np.append(cat.categories, np.nan)
-    else:
-        # reset NaN GH4446
-        dummy_mat[cat.codes == -1] = 0
 
     if prefix is not None:
         dummy_cols = ['%s%s%s' % (prefix, prefix_sep, v)
@@ -1084,7 +1109,31 @@ def _get_dummies_1d(data, prefix, prefix_sep='_', dummy_na=False):
     else:
         index = None
 
-    return DataFrame(dummy_mat, index=index, columns=dummy_cols)
+    if sparse:
+        sparse_series = {}
+        N = len(data)
+        sp_indices = [ [] for _ in range(len(dummy_cols)) ]
+        for ndx, code in enumerate(codes):
+            if code == -1:
+                # Blank entries if not dummy_na and code == -1, #GH4446
+                continue
+            sp_indices[code].append(ndx)
+
+        for col, ixs in zip(dummy_cols, sp_indices):
+            sarr = SparseArray(np.ones(len(ixs)), sparse_index=IntIndex(N, ixs),
+                               fill_value=0)
+            sparse_series[col] = SparseSeries(data=sarr, index=index)
+
+        return SparseDataFrame(sparse_series, index=index, columns=dummy_cols)
+
+    else:
+        dummy_mat = np.eye(number_of_cols).take(codes, axis=0)
+
+        if not dummy_na:
+            # reset NaN GH4446
+            dummy_mat[codes == -1] = 0
+
+        return DataFrame(dummy_mat, index=index, columns=dummy_cols)
 
 
 def make_axis_dummies(frame, axis='minor', transform=None):

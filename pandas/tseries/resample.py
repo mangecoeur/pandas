@@ -1,14 +1,11 @@
 from datetime import timedelta
-
 import numpy as np
-
 from pandas.core.groupby import BinGrouper, Grouper
 from pandas.tseries.frequencies import to_offset, is_subperiod, is_superperiod
 from pandas.tseries.index import DatetimeIndex, date_range
 from pandas.tseries.tdi import TimedeltaIndex
 from pandas.tseries.offsets import DateOffset, Tick, Day, _delta_to_nanoseconds
 from pandas.tseries.period import PeriodIndex, period_range
-import pandas.tseries.tools as tools
 import pandas.core.common as com
 import pandas.compat as compat
 
@@ -241,6 +238,10 @@ class TimeGrouper(Grouper):
         end_stamps = labels + 1
         bins = ax.searchsorted(end_stamps, side='left')
 
+        # Addresses GH #10530
+        if self.base > 0:
+            labels += type(self.freq)(self.base)
+
         return binner, bins, labels
 
     def _get_time_period_bins(self, ax):
@@ -373,11 +374,11 @@ def _take_new_index(obj, indexer, new_index, axis=0):
         return Series(new_values, index=new_index, name=obj.name)
     elif isinstance(obj, DataFrame):
         if axis == 1:
-            raise NotImplementedError
+            raise NotImplementedError("axis 1 is not supported")
         return DataFrame(obj._data.reindex_indexer(
             new_axis=new_index, indexer=indexer, axis=1))
     else:
-        raise NotImplementedError
+        raise ValueError("'obj' should be either a Series or a DataFrame")
 
 
 def _get_range_edges(first, last, offset, closed='left', base=0):
@@ -467,7 +468,7 @@ def asfreq(obj, freq, method=None, how=None, normalize=False):
     """
     if isinstance(obj.index, PeriodIndex):
         if method is not None:
-            raise NotImplementedError
+            raise NotImplementedError("'method' argument is not supported")
 
         if how is None:
             how = 'E'
@@ -480,6 +481,7 @@ def asfreq(obj, freq, method=None, how=None, normalize=False):
         if len(obj.index) == 0:
             return obj.copy()
         dti = date_range(obj.index[0], obj.index[-1], freq=freq)
+        dti.name = obj.index.name
         rs = obj.reindex(dti, method=method)
         if normalize:
             rs.index = rs.index.normalize()

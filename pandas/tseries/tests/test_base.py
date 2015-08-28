@@ -4,10 +4,11 @@ from datetime import datetime, timedelta
 import numpy as np
 import pandas as pd
 from pandas.tseries.base import DatetimeIndexOpsMixin
-from pandas.util.testing import assertRaisesRegexp, assert_isinstance
+from pandas.util.testing import assertRaisesRegexp, assertIsInstance
 from pandas.tseries.common import is_datetimelike
 from pandas import (Series, Index, Int64Index, Timestamp, DatetimeIndex, PeriodIndex,
                     TimedeltaIndex, Timedelta, timedelta_range, date_range, Float64Index)
+import pandas.tseries.offsets as offsets
 import pandas.tslib as tslib
 import nose
 
@@ -119,29 +120,24 @@ class TestDatetimeIndexOps(Ops):
         idx6 = DatetimeIndex(['2011-01-01 09:00', '2011-01-01 10:00', pd.NaT],
                              tz='US/Eastern')
 
-        exp1 = """<class 'pandas.tseries.index.DatetimeIndex'>
-Length: 0, Freq: D, Timezone: None"""
-        exp2 = """<class 'pandas.tseries.index.DatetimeIndex'>
-[2011-01-01]
-Length: 1, Freq: D, Timezone: None"""
-        exp3 = """<class 'pandas.tseries.index.DatetimeIndex'>
-[2011-01-01, 2011-01-02]
-Length: 2, Freq: D, Timezone: None"""
-        exp4 = """<class 'pandas.tseries.index.DatetimeIndex'>
-[2011-01-01, ..., 2011-01-03]
-Length: 3, Freq: D, Timezone: None"""
-        exp5 = """<class 'pandas.tseries.index.DatetimeIndex'>
-[2011-01-01 09:00:00+09:00, ..., 2011-01-01 11:00:00+09:00]
-Length: 3, Freq: H, Timezone: Asia/Tokyo"""
-        exp6 = """<class 'pandas.tseries.index.DatetimeIndex'>
-[2011-01-01 09:00:00-05:00, ..., NaT]
-Length: 3, Freq: None, Timezone: US/Eastern"""
+        exp1 = """DatetimeIndex([], dtype='datetime64[ns]', freq='D', tz=None)"""
 
-        for idx, expected in zip([idx1, idx2, idx3, idx4, idx5, idx6],
-                                 [exp1, exp2, exp3, exp4, exp5, exp6]):
-            for func in ['__repr__', '__unicode__', '__str__']:
-                result = getattr(idx, func)()
-                self.assertEqual(result, expected)
+        exp2 = """DatetimeIndex(['2011-01-01'], dtype='datetime64[ns]', freq='D', tz=None)"""
+
+        exp3 = """DatetimeIndex(['2011-01-01', '2011-01-02'], dtype='datetime64[ns]', freq='D', tz=None)"""
+
+        exp4 = """DatetimeIndex(['2011-01-01', '2011-01-02', '2011-01-03'], dtype='datetime64[ns]', freq='D', tz=None)"""
+
+        exp5 = """DatetimeIndex(['2011-01-01 09:00:00+09:00', '2011-01-01 10:00:00+09:00', '2011-01-01 11:00:00+09:00'], dtype='datetime64[ns]', freq='H', tz='Asia/Tokyo')"""
+
+        exp6 = """DatetimeIndex(['2011-01-01 09:00:00-05:00', '2011-01-01 10:00:00-05:00', 'NaT'], dtype='datetime64[ns]', freq=None, tz='US/Eastern')"""
+
+        with pd.option_context('display.width', 300):
+            for idx, expected in zip([idx1, idx2, idx3, idx4, idx5, idx6],
+                                     [exp1, exp2, exp3, exp4, exp5, exp6]):
+                for func in ['__repr__', '__unicode__', '__str__']:
+                    result = getattr(idx, func)()
+                    self.assertEqual(result, expected)
 
     def test_summary(self):
         # GH9116
@@ -302,6 +298,157 @@ Freq: H"""
                                        ['2015', '2015', '2016'], ['2015', '2015', '2014'])):
             tm.assertIn(idx[0], idx)
 
+    def test_order(self):
+        # with freq
+        idx1 = DatetimeIndex(['2011-01-01', '2011-01-02', '2011-01-03'], freq='D', name='idx')
+        idx2 = DatetimeIndex(['2011-01-01 09:00', '2011-01-01 10:00', '2011-01-01 11:00'],
+                             freq='H', tz='Asia/Tokyo', name='tzidx')
+
+        for idx in [idx1, idx2]:
+            ordered = idx.sort_values()
+            self.assert_index_equal(ordered, idx)
+            self.assertEqual(ordered.freq, idx.freq)
+
+            ordered = idx.sort_values(ascending=False)
+            expected = idx[::-1]
+            self.assert_index_equal(ordered, expected)
+            self.assertEqual(ordered.freq, expected.freq)
+            self.assertEqual(ordered.freq.n, -1)
+
+            ordered, indexer = idx.sort_values(return_indexer=True)
+            self.assert_index_equal(ordered, idx)
+            self.assert_numpy_array_equal(indexer, np.array([0, 1, 2]))
+            self.assertEqual(ordered.freq, idx.freq)
+
+            ordered, indexer = idx.sort_values(return_indexer=True, ascending=False)
+            expected = idx[::-1]
+            self.assert_index_equal(ordered, expected)
+            self.assert_numpy_array_equal(indexer, np.array([2, 1, 0]))
+            self.assertEqual(ordered.freq, expected.freq)
+            self.assertEqual(ordered.freq.n, -1)
+
+        # without freq
+        idx1 = DatetimeIndex(['2011-01-01', '2011-01-03', '2011-01-05',
+                              '2011-01-02', '2011-01-01'], name='idx1')
+        exp1 = DatetimeIndex(['2011-01-01', '2011-01-01', '2011-01-02',
+                              '2011-01-03', '2011-01-05'], name='idx1')
+
+        idx2 = DatetimeIndex(['2011-01-01', '2011-01-03', '2011-01-05',
+                              '2011-01-02', '2011-01-01'],
+                             tz='Asia/Tokyo', name='idx2')
+        exp2 = DatetimeIndex(['2011-01-01', '2011-01-01', '2011-01-02',
+                              '2011-01-03', '2011-01-05'],
+                             tz='Asia/Tokyo', name='idx2')
+
+        idx3 = DatetimeIndex([pd.NaT, '2011-01-03', '2011-01-05',
+                              '2011-01-02', pd.NaT], name='idx3')
+        exp3 = DatetimeIndex([pd.NaT, pd.NaT, '2011-01-02', '2011-01-03',
+                              '2011-01-05'], name='idx3')
+
+        for idx, expected in [(idx1, exp1), (idx1, exp1), (idx1, exp1)]:
+            ordered = idx.sort_values()
+            self.assert_index_equal(ordered, expected)
+            self.assertIsNone(ordered.freq)
+
+            ordered = idx.sort_values(ascending=False)
+            self.assert_index_equal(ordered, expected[::-1])
+            self.assertIsNone(ordered.freq)
+
+            ordered, indexer = idx.sort_values(return_indexer=True)
+            self.assert_index_equal(ordered, expected)
+            self.assert_numpy_array_equal(indexer, np.array([0, 4, 3, 1, 2]))
+            self.assertIsNone(ordered.freq)
+
+            ordered, indexer = idx.sort_values(return_indexer=True, ascending=False)
+            self.assert_index_equal(ordered, expected[::-1])
+            self.assert_numpy_array_equal(indexer, np.array([2, 1, 3, 4, 0]))
+            self.assertIsNone(ordered.freq)
+
+    def test_getitem(self):
+        idx1 = pd.date_range('2011-01-01', '2011-01-31', freq='D', name='idx')
+        idx2 = pd.date_range('2011-01-01', '2011-01-31', freq='D', tz='Asia/Tokyo', name='idx')
+
+        for idx in [idx1, idx2]:
+            result = idx[0]
+            self.assertEqual(result, pd.Timestamp('2011-01-01', tz=idx.tz))
+
+            result = idx[0:5]
+            expected = pd.date_range('2011-01-01', '2011-01-05', freq='D',
+                                     tz=idx.tz, name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx[0:10:2]
+            expected = pd.date_range('2011-01-01', '2011-01-09', freq='2D',
+                                     tz=idx.tz, name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx[-20:-5:3]
+            expected = pd.date_range('2011-01-12', '2011-01-24', freq='3D',
+                                     tz=idx.tz, name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx[4::-1]
+            expected = DatetimeIndex(['2011-01-05', '2011-01-04', '2011-01-03',
+                                      '2011-01-02', '2011-01-01'],
+                                     freq='-1D', tz=idx.tz, name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+    def test_drop_duplicates_metadata(self):
+        #GH 10115
+        idx = pd.date_range('2011-01-01', '2011-01-31', freq='D', name='idx')
+        result = idx.drop_duplicates()
+        self.assert_index_equal(idx, result)
+        self.assertEqual(idx.freq, result.freq)
+
+        idx_dup = idx.append(idx)
+        self.assertIsNone(idx_dup.freq)   # freq is reset
+        result = idx_dup.drop_duplicates()
+        self.assert_index_equal(idx, result)
+        self.assertIsNone(result.freq)
+
+    def test_take(self):
+        #GH 10295
+        idx1 = pd.date_range('2011-01-01', '2011-01-31', freq='D', name='idx')
+        idx2 = pd.date_range('2011-01-01', '2011-01-31', freq='D', tz='Asia/Tokyo', name='idx')
+
+        for idx in [idx1, idx2]:
+            result = idx.take([0])
+            self.assertEqual(result, pd.Timestamp('2011-01-01', tz=idx.tz))
+
+            result = idx.take([0, 1, 2])
+            expected = pd.date_range('2011-01-01', '2011-01-03', freq='D',
+                                     tz=idx.tz, name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx.take([0, 2, 4])
+            expected = pd.date_range('2011-01-01', '2011-01-05', freq='2D',
+                                     tz=idx.tz, name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx.take([7, 4, 1])
+            expected = pd.date_range('2011-01-08', '2011-01-02', freq='-3D',
+                                     tz=idx.tz, name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx.take([3, 2, 5])
+            expected = DatetimeIndex(['2011-01-04', '2011-01-03', '2011-01-06'],
+                                     freq=None, tz=idx.tz, name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertIsNone(result.freq)
+
+            result = idx.take([-3, 2, 5])
+            expected = DatetimeIndex(['2011-01-29', '2011-01-03', '2011-01-06'],
+                                     freq=None, tz=idx.tz, name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertIsNone(result.freq)
+
 
 class TestTimedeltaIndexOps(Ops):
 
@@ -372,27 +519,22 @@ class TestTimedeltaIndexOps(Ops):
         idx4 = TimedeltaIndex(['1 days', '2 days', '3 days'], freq='D')
         idx5 = TimedeltaIndex(['1 days 00:00:01', '2 days', '3 days'])
 
+        exp1 = """TimedeltaIndex([], dtype='timedelta64[ns]', freq='D')"""
 
-        exp1 = """<class 'pandas.tseries.tdi.TimedeltaIndex'>
-Length: 0, Freq: D"""
-        exp2 = """<class 'pandas.tseries.tdi.TimedeltaIndex'>
-['1 days']
-Length: 1, Freq: D"""
-        exp3 = """<class 'pandas.tseries.tdi.TimedeltaIndex'>
-['1 days', '2 days']
-Length: 2, Freq: D"""
-        exp4 = """<class 'pandas.tseries.tdi.TimedeltaIndex'>
-['1 days', ..., '3 days']
-Length: 3, Freq: D"""
-        exp5 = """<class 'pandas.tseries.tdi.TimedeltaIndex'>
-['1 days 00:00:01', ..., '3 days 00:00:00']
-Length: 3, Freq: None"""
+        exp2 = """TimedeltaIndex(['1 days'], dtype='timedelta64[ns]', freq='D')"""
 
-        for idx, expected in zip([idx1, idx2, idx3, idx4, idx5],
-                                 [exp1, exp2, exp3, exp4, exp5]):
-            for func in ['__repr__', '__unicode__', '__str__']:
-                result = getattr(idx, func)()
-                self.assertEqual(result, expected)
+        exp3 = """TimedeltaIndex(['1 days', '2 days'], dtype='timedelta64[ns]', freq='D')"""
+
+        exp4 = """TimedeltaIndex(['1 days', '2 days', '3 days'], dtype='timedelta64[ns]', freq='D')"""
+
+        exp5 = """TimedeltaIndex(['1 days 00:00:01', '2 days 00:00:00', '3 days 00:00:00'], dtype='timedelta64[ns]', freq=None)"""
+
+        with pd.option_context('display.width',300):
+            for idx, expected in zip([idx1, idx2, idx3, idx4, idx5],
+                                     [exp1, exp2, exp3, exp4, exp5]):
+                for func in ['__repr__', '__unicode__', '__str__']:
+                    result = getattr(idx, func)()
+                    self.assertEqual(result, expected)
 
     def test_summary(self):
         # GH9116
@@ -404,13 +546,13 @@ Length: 3, Freq: None"""
 
         exp1 = """TimedeltaIndex: 0 entries
 Freq: D"""
-        exp2 = """TimedeltaIndex: 1 entries, '1 days' to '1 days'
+        exp2 = """TimedeltaIndex: 1 entries, 1 days to 1 days
 Freq: D"""
-        exp3 = """TimedeltaIndex: 2 entries, '1 days' to '2 days'
+        exp3 = """TimedeltaIndex: 2 entries, 1 days to 2 days
 Freq: D"""
-        exp4 = """TimedeltaIndex: 3 entries, '1 days' to '3 days'
+        exp4 = """TimedeltaIndex: 3 entries, 1 days to 3 days
 Freq: D"""
-        exp5 = """TimedeltaIndex: 3 entries, '1 days 00:00:01' to '3 days 00:00:00'"""
+        exp5 = """TimedeltaIndex: 3 entries, 1 days 00:00:01 to 3 days 00:00:00"""
 
         for idx, expected in zip([idx1, idx2, idx3, idx4, idx5],
                                  [exp1, exp2, exp3, exp4, exp5]):
@@ -483,8 +625,8 @@ Freq: D"""
             tm.assert_index_equal(result,expected)
 
         # divide with nats
-        rng = TimedeltaIndex(['1 days',pd.NaT,'2 days'],name='foo')
-        expected = Float64Index([12,np.nan,24])
+        rng = TimedeltaIndex(['1 days', pd.NaT, '2 days'], name='foo')
+        expected = Float64Index([12, np.nan, 24], name='foo')
         for offset in offsets:
             result = rng / offset
             tm.assert_index_equal(result,expected)
@@ -495,8 +637,8 @@ Freq: D"""
     def test_subtraction_ops(self):
 
         # with datetimes/timedelta and tdi/dti
-        tdi = TimedeltaIndex(['1 days',pd.NaT,'2 days'],name='foo')
-        dti = date_range('20130101',periods=3)
+        tdi = TimedeltaIndex(['1 days', pd.NaT, '2 days'], name='foo')
+        dti = date_range('20130101', periods=3, name='bar')
         td = Timedelta('1 days')
         dt = Timestamp('20130101')
 
@@ -505,29 +647,29 @@ Freq: D"""
         self.assertRaises(TypeError, lambda : td - dt)
         self.assertRaises(TypeError, lambda : td - dti)
 
-        result = dt-dti
-        expected = TimedeltaIndex(['0 days','-1 days','-2 days'])
-        tm.assert_index_equal(result,expected)
+        result = dt - dti
+        expected = TimedeltaIndex(['0 days', '-1 days', '-2 days'], name='bar')
+        tm.assert_index_equal(result, expected)
 
-        result = dti-dt
-        expected = TimedeltaIndex(['0 days','1 days','2 days'])
-        tm.assert_index_equal(result,expected)
+        result = dti - dt
+        expected = TimedeltaIndex(['0 days', '1 days', '2 days'], name='bar')
+        tm.assert_index_equal(result, expected)
 
-        result = tdi-td
-        expected = TimedeltaIndex(['0 days',pd.NaT,'1 days'])
-        tm.assert_index_equal(result,expected)
+        result = tdi - td
+        expected = TimedeltaIndex(['0 days', pd.NaT, '1 days'], name='foo')
+        tm.assert_index_equal(result, expected, check_names=False)
 
-        result = td-tdi
-        expected = TimedeltaIndex(['0 days',pd.NaT,'-1 days'])
-        tm.assert_index_equal(result,expected)
+        result = td - tdi
+        expected = TimedeltaIndex(['0 days', pd.NaT, '-1 days'], name='foo')
+        tm.assert_index_equal(result, expected, check_names=False)
 
-        result = dti-td
-        expected = DatetimeIndex(['20121231','20130101','20130102'])
-        tm.assert_index_equal(result,expected)
+        result = dti - td
+        expected = DatetimeIndex(['20121231', '20130101', '20130102'], name='bar')
+        tm.assert_index_equal(result, expected, check_names=False)
 
-        result = dt-tdi
-        expected = DatetimeIndex(['20121231',pd.NaT,'20121230'])
-        tm.assert_index_equal(result,expected)
+        result = dt - tdi
+        expected = DatetimeIndex(['20121231', pd.NaT, '20121230'], name='foo')
+        tm.assert_index_equal(result, expected)
 
     def test_subtraction_ops_with_tz(self):
 
@@ -644,46 +786,46 @@ Freq: D"""
     def test_dti_tdi_numeric_ops(self):
 
         # These are normally union/diff set-like ops
-        tdi = TimedeltaIndex(['1 days',pd.NaT,'2 days'],name='foo')
-        dti = date_range('20130101',periods=3)
+        tdi = TimedeltaIndex(['1 days', pd.NaT, '2 days'], name='foo')
+        dti = date_range('20130101', periods=3, name='bar')
         td = Timedelta('1 days')
         dt = Timestamp('20130101')
 
-        result = tdi-tdi
-        expected = TimedeltaIndex(['0 days',pd.NaT,'0 days'])
-        tm.assert_index_equal(result,expected)
+        result = tdi - tdi
+        expected = TimedeltaIndex(['0 days', pd.NaT, '0 days'], name='foo')
+        tm.assert_index_equal(result, expected)
 
-        result = tdi+tdi
-        expected = TimedeltaIndex(['2 days',pd.NaT,'4 days'])
-        tm.assert_index_equal(result,expected)
+        result = tdi + tdi
+        expected = TimedeltaIndex(['2 days', pd.NaT, '4 days'], name='foo')
+        tm.assert_index_equal(result, expected)
 
-        result = dti-tdi
-        expected = DatetimeIndex(['20121231',pd.NaT,'20130101'])
-        tm.assert_index_equal(result,expected)
+        result = dti - tdi   # name will be reset
+        expected = DatetimeIndex(['20121231', pd.NaT, '20130101'])
+        tm.assert_index_equal(result, expected)
 
     def test_addition_ops(self):
 
         # with datetimes/timedelta and tdi/dti
-        tdi = TimedeltaIndex(['1 days',pd.NaT,'2 days'],name='foo')
-        dti = date_range('20130101',periods=3)
+        tdi = TimedeltaIndex(['1 days', pd.NaT, '2 days'], name='foo')
+        dti = date_range('20130101', periods=3, name='bar')
         td = Timedelta('1 days')
         dt = Timestamp('20130101')
 
         result = tdi + dt
-        expected = DatetimeIndex(['20130102',pd.NaT,'20130103'])
-        tm.assert_index_equal(result,expected)
+        expected = DatetimeIndex(['20130102', pd.NaT, '20130103'], name='foo')
+        tm.assert_index_equal(result, expected)
 
         result = dt + tdi
-        expected = DatetimeIndex(['20130102',pd.NaT,'20130103'])
-        tm.assert_index_equal(result,expected)
+        expected = DatetimeIndex(['20130102', pd.NaT, '20130103'], name='foo')
+        tm.assert_index_equal(result, expected)
 
         result = td + tdi
-        expected = TimedeltaIndex(['2 days',pd.NaT,'3 days'])
-        tm.assert_index_equal(result,expected)
+        expected = TimedeltaIndex(['2 days', pd.NaT, '3 days'], name='foo')
+        tm.assert_index_equal(result, expected)
 
         result = tdi + td
-        expected = TimedeltaIndex(['2 days',pd.NaT,'3 days'])
-        tm.assert_index_equal(result,expected)
+        expected = TimedeltaIndex(['2 days', pd.NaT, '3 days'], name='foo')
+        tm.assert_index_equal(result, expected)
 
         # unequal length
         self.assertRaises(ValueError, lambda : tdi + dti[0:1])
@@ -695,21 +837,21 @@ Freq: D"""
         # this is a union!
         #self.assertRaises(TypeError, lambda : Int64Index([1,2,3]) + tdi)
 
-        result = tdi + dti
-        expected = DatetimeIndex(['20130102',pd.NaT,'20130105'])
-        tm.assert_index_equal(result,expected)
+        result = tdi + dti   # name will be reset
+        expected = DatetimeIndex(['20130102', pd.NaT, '20130105'])
+        tm.assert_index_equal(result, expected)
 
-        result = dti + tdi
-        expected = DatetimeIndex(['20130102',pd.NaT,'20130105'])
-        tm.assert_index_equal(result,expected)
+        result = dti + tdi   # name will be reset
+        expected = DatetimeIndex(['20130102', pd.NaT, '20130105'])
+        tm.assert_index_equal(result, expected)
 
         result = dt + td
         expected = Timestamp('20130102')
-        self.assertEqual(result,expected)
+        self.assertEqual(result, expected)
 
         result = td + dt
         expected = Timestamp('20130102')
-        self.assertEqual(result,expected)
+        self.assertEqual(result, expected)
 
     def test_value_counts_unique(self):
         # GH 7735
@@ -726,7 +868,7 @@ Freq: D"""
         tm.assert_index_equal(idx.unique(), expected)
 
         idx = TimedeltaIndex(['1 days 09:00:00', '1 days 09:00:00', '1 days 09:00:00',
-                             '1 days 08:00:00', '1 days 08:00:00', pd.NaT])
+                              '1 days 08:00:00', '1 days 08:00:00', pd.NaT])
 
         exp_idx = TimedeltaIndex(['1 days 09:00:00', '1 days 08:00:00'])
         expected = Series([3, 2], index=exp_idx)
@@ -744,6 +886,150 @@ Freq: D"""
                                         ['00:01:00', '00:01:00', '00:02:00'],
                                         ['00:01:00', '00:01:00', '00:00:01'])):
             tm.assertIn(idx[0], idx)
+
+    def test_unknown_attribute(self):
+        #GH 9680
+        tdi = pd.timedelta_range(start=0,periods=10,freq='1s')
+        ts = pd.Series(np.random.normal(size=10),index=tdi)
+        self.assertNotIn('foo',ts.__dict__.keys())
+        self.assertRaises(AttributeError,lambda : ts.foo)
+
+    def test_order(self):
+        #GH 10295
+        idx1 = TimedeltaIndex(['1 day', '2 day', '3 day'], freq='D', name='idx')
+        idx2 = TimedeltaIndex(['1 hour', '2 hour', '3 hour'], freq='H', name='idx')
+
+        for idx in [idx1, idx2]:
+            ordered = idx.sort_values()
+            self.assert_index_equal(ordered, idx)
+            self.assertEqual(ordered.freq, idx.freq)
+
+            ordered = idx.sort_values(ascending=False)
+            expected = idx[::-1]
+            self.assert_index_equal(ordered, expected)
+            self.assertEqual(ordered.freq, expected.freq)
+            self.assertEqual(ordered.freq.n, -1)
+
+            ordered, indexer = idx.sort_values(return_indexer=True)
+            self.assert_index_equal(ordered, idx)
+            self.assert_numpy_array_equal(indexer, np.array([0, 1, 2]))
+            self.assertEqual(ordered.freq, idx.freq)
+
+            ordered, indexer = idx.sort_values(return_indexer=True, ascending=False)
+            self.assert_index_equal(ordered, idx[::-1])
+            self.assertEqual(ordered.freq, expected.freq)
+            self.assertEqual(ordered.freq.n, -1)
+
+        idx1 = TimedeltaIndex(['1 hour', '3 hour', '5 hour',
+                               '2 hour ', '1 hour'], name='idx1')
+        exp1 = TimedeltaIndex(['1 hour', '1 hour', '2 hour',
+                               '3 hour', '5 hour'], name='idx1')
+
+        idx2 = TimedeltaIndex(['1 day', '3 day', '5 day',
+                               '2 day', '1 day'], name='idx2')
+        exp2 = TimedeltaIndex(['1 day', '1 day', '2 day',
+                               '3 day', '5 day'], name='idx2')
+
+        idx3 = TimedeltaIndex([pd.NaT, '3 minute', '5 minute',
+                               '2 minute', pd.NaT], name='idx3')
+        exp3 = TimedeltaIndex([pd.NaT, pd.NaT, '2 minute', '3 minute',
+                               '5 minute'], name='idx3')
+
+        for idx, expected in [(idx1, exp1), (idx1, exp1), (idx1, exp1)]:
+            ordered = idx.sort_values()
+            self.assert_index_equal(ordered, expected)
+            self.assertIsNone(ordered.freq)
+
+            ordered = idx.sort_values(ascending=False)
+            self.assert_index_equal(ordered, expected[::-1])
+            self.assertIsNone(ordered.freq)
+
+            ordered, indexer = idx.sort_values(return_indexer=True)
+            self.assert_index_equal(ordered, expected)
+            self.assert_numpy_array_equal(indexer, np.array([0, 4, 3, 1, 2]))
+            self.assertIsNone(ordered.freq)
+
+            ordered, indexer = idx.sort_values(return_indexer=True, ascending=False)
+            self.assert_index_equal(ordered, expected[::-1])
+            self.assert_numpy_array_equal(indexer, np.array([2, 1, 3, 4, 0]))
+            self.assertIsNone(ordered.freq)
+
+    def test_getitem(self):
+        idx1 = pd.timedelta_range('1 day', '31 day', freq='D', name='idx')
+
+        for idx in [idx1]:
+            result = idx[0]
+            self.assertEqual(result, pd.Timedelta('1 day'))
+
+            result = idx[0:5]
+            expected = pd.timedelta_range('1 day', '5 day', freq='D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx[0:10:2]
+            expected = pd.timedelta_range('1 day', '9 day', freq='2D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx[-20:-5:3]
+            expected = pd.timedelta_range('12 day', '24 day', freq='3D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx[4::-1]
+            expected = TimedeltaIndex(['5 day', '4 day', '3 day', '2 day', '1 day'],
+                                      freq='-1D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+    def test_drop_duplicates_metadata(self):
+        #GH 10115
+        idx = pd.timedelta_range('1 day', '31 day', freq='D', name='idx')
+        result = idx.drop_duplicates()
+        self.assert_index_equal(idx, result)
+        self.assertEqual(idx.freq, result.freq)
+
+        idx_dup = idx.append(idx)
+        self.assertIsNone(idx_dup.freq)   # freq is reset
+        result = idx_dup.drop_duplicates()
+        self.assert_index_equal(idx, result)
+        self.assertIsNone(result.freq)
+
+    def test_take(self):
+        #GH 10295
+        idx1 = pd.timedelta_range('1 day', '31 day', freq='D', name='idx')
+
+        for idx in [idx1]:
+            result = idx.take([0])
+            self.assertEqual(result, pd.Timedelta('1 day'))
+
+            result = idx.take([-1])
+            self.assertEqual(result, pd.Timedelta('31 day'))
+
+            result = idx.take([0, 1, 2])
+            expected = pd.timedelta_range('1 day', '3 day', freq='D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx.take([0, 2, 4])
+            expected = pd.timedelta_range('1 day', '5 day', freq='2D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx.take([7, 4, 1])
+            expected = pd.timedelta_range('8 day', '2 day', freq='-3D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx.take([3, 2, 5])
+            expected = TimedeltaIndex(['4 day', '3 day', '6 day'], name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertIsNone(result.freq)
+
+            result = idx.take([-3, 2, 5])
+            expected = TimedeltaIndex(['29 day', '3 day', '6 day'], name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertIsNone(result.freq)
 
 
 class TestPeriodIndexOps(Ops):
@@ -835,32 +1121,23 @@ class TestPeriodIndexOps(Ops):
         idx8 = pd.period_range('2013Q1', periods=2, freq="Q")
         idx9 = pd.period_range('2013Q1', periods=3, freq="Q")
 
-        exp1 = """<class 'pandas.tseries.period.PeriodIndex'>
-Length: 0, Freq: D"""
-        exp2 = """<class 'pandas.tseries.period.PeriodIndex'>
-[2011-01-01]
-Length: 1, Freq: D"""
-        exp3 = """<class 'pandas.tseries.period.PeriodIndex'>
-[2011-01-01, 2011-01-02]
-Length: 2, Freq: D"""
-        exp4 = """<class 'pandas.tseries.period.PeriodIndex'>
-[2011-01-01, ..., 2011-01-03]
-Length: 3, Freq: D"""
-        exp5 = """<class 'pandas.tseries.period.PeriodIndex'>
-[2011, ..., 2013]
-Length: 3, Freq: A-DEC"""
-        exp6 = """<class 'pandas.tseries.period.PeriodIndex'>
-[2011-01-01 09:00, ..., NaT]
-Length: 3, Freq: H"""
-        exp7 = """<class 'pandas.tseries.period.PeriodIndex'>
-[2013Q1]
-Length: 1, Freq: Q-DEC"""
-        exp8 = """<class 'pandas.tseries.period.PeriodIndex'>
-[2013Q1, 2013Q2]
-Length: 2, Freq: Q-DEC"""
-        exp9 = """<class 'pandas.tseries.period.PeriodIndex'>
-[2013Q1, ..., 2013Q3]
-Length: 3, Freq: Q-DEC"""
+        exp1 = """PeriodIndex([], dtype='int64', freq='D')"""
+
+        exp2 = """PeriodIndex(['2011-01-01'], dtype='int64', freq='D')"""
+
+        exp3 = """PeriodIndex(['2011-01-01', '2011-01-02'], dtype='int64', freq='D')"""
+
+        exp4 = """PeriodIndex(['2011-01-01', '2011-01-02', '2011-01-03'], dtype='int64', freq='D')"""
+
+        exp5 = """PeriodIndex(['2011', '2012', '2013'], dtype='int64', freq='A-DEC')"""
+
+        exp6 = """PeriodIndex(['2011-01-01 09:00', '2012-02-01 10:00', 'NaT'], dtype='int64', freq='H')"""
+
+        exp7 = """PeriodIndex(['2013Q1'], dtype='int64', freq='Q-DEC')"""
+
+        exp8 = """PeriodIndex(['2013Q1', '2013Q2'], dtype='int64', freq='Q-DEC')"""
+
+        exp9 = """PeriodIndex(['2013Q1', '2013Q2', '2013Q3'], dtype='int64', freq='Q-DEC')"""
 
         for idx, expected in zip([idx1, idx2, idx3, idx4, idx5, idx6, idx7, idx8, idx9],
                                  [exp1, exp2, exp3, exp4, exp5, exp6, exp7, exp8, exp9]):
@@ -1180,6 +1457,221 @@ Freq: Q-DEC"""
         tm.assert_series_equal(idx.value_counts(dropna=False), expected)
 
         tm.assert_index_equal(idx.unique(), exp_idx)
+
+    def test_drop_duplicates_metadata(self):
+        #GH 10115
+        idx = pd.period_range('2011-01-01', '2011-01-31', freq='D', name='idx')
+        result = idx.drop_duplicates()
+        self.assert_index_equal(idx, result)
+        self.assertEqual(idx.freq, result.freq)
+
+        idx_dup = idx.append(idx) # freq will not be reset
+        result = idx_dup.drop_duplicates()
+        self.assert_index_equal(idx, result)
+        self.assertEqual(idx.freq, result.freq)
+
+    def test_order_compat(self):
+
+        def _check_freq(index, expected_index):
+            if isinstance(index, PeriodIndex):
+                self.assertEqual(index.freq, expected_index.freq)
+
+        pidx = PeriodIndex(['2011', '2012', '2013'], name='pidx', freq='A')
+        # for compatibility check
+        iidx = Index([2011, 2012, 2013], name='idx')
+        for idx in [pidx, iidx]:
+            ordered = idx.sort_values()
+            self.assert_index_equal(ordered, idx)
+            _check_freq(ordered, idx)
+
+            ordered = idx.sort_values(ascending=False)
+            self.assert_index_equal(ordered, idx[::-1])
+            _check_freq(ordered, idx[::-1])
+
+            ordered, indexer = idx.sort_values(return_indexer=True)
+            self.assert_index_equal(ordered, idx)
+            self.assert_numpy_array_equal(indexer, np.array([0, 1, 2]))
+            _check_freq(ordered, idx)
+
+            ordered, indexer = idx.sort_values(return_indexer=True, ascending=False)
+            self.assert_index_equal(ordered, idx[::-1])
+            self.assert_numpy_array_equal(indexer, np.array([2, 1, 0]))
+            _check_freq(ordered, idx[::-1])
+
+        pidx = PeriodIndex(['2011', '2013', '2015', '2012', '2011'], name='pidx', freq='A')
+        pexpected = PeriodIndex(['2011', '2011', '2012', '2013', '2015'], name='pidx', freq='A')
+        # for compatibility check
+        iidx = Index([2011, 2013, 2015, 2012, 2011], name='idx')
+        iexpected = Index([2011, 2011, 2012, 2013, 2015], name='idx')
+        for idx, expected in [(pidx, pexpected), (iidx, iexpected)]:
+            ordered = idx.sort_values()
+            self.assert_index_equal(ordered, expected)
+            _check_freq(ordered, idx)
+
+            ordered = idx.sort_values(ascending=False)
+            self.assert_index_equal(ordered, expected[::-1])
+            _check_freq(ordered, idx)
+
+            ordered, indexer = idx.sort_values(return_indexer=True)
+            self.assert_index_equal(ordered, expected)
+            self.assert_numpy_array_equal(indexer, np.array([0, 4, 3, 1, 2]))
+            _check_freq(ordered, idx)
+
+            ordered, indexer = idx.sort_values(return_indexer=True, ascending=False)
+            self.assert_index_equal(ordered, expected[::-1])
+            self.assert_numpy_array_equal(indexer, np.array([2, 1, 3, 4, 0]))
+            _check_freq(ordered, idx)
+
+        pidx = PeriodIndex(['2011', '2013', 'NaT', '2011'], name='pidx', freq='D')
+
+        result = pidx.sort_values()
+        expected = PeriodIndex(['NaT', '2011', '2011', '2013'], name='pidx', freq='D')
+        self.assert_index_equal(result, expected)
+        self.assertEqual(result.freq, 'D')
+
+        result = pidx.sort_values(ascending=False)
+        expected = PeriodIndex(['2013', '2011', '2011', 'NaT'], name='pidx', freq='D')
+        self.assert_index_equal(result, expected)
+        self.assertEqual(result.freq, 'D')
+
+    def test_order(self):
+        idx1 = PeriodIndex(['2011-01-01', '2011-01-02', '2011-01-03'],
+                           freq='D', name='idx')
+
+        for idx in [idx1]:
+            ordered = idx.sort_values()
+            self.assert_index_equal(ordered, idx)
+            self.assertEqual(ordered.freq, idx.freq)
+
+            ordered = idx.sort_values(ascending=False)
+            expected = idx[::-1]
+            self.assert_index_equal(ordered, expected)
+            self.assertEqual(ordered.freq, 'D')
+
+            ordered, indexer = idx.sort_values(return_indexer=True)
+            self.assert_index_equal(ordered, idx)
+            self.assert_numpy_array_equal(indexer, np.array([0, 1, 2]))
+            self.assertEqual(ordered.freq, 'D')
+
+            ordered, indexer = idx.sort_values(return_indexer=True, ascending=False)
+            expected = idx[::-1]
+            self.assert_index_equal(ordered, expected)
+            self.assert_numpy_array_equal(indexer, np.array([2, 1, 0]))
+            self.assertEqual(ordered.freq, 'D')
+
+        idx1 = PeriodIndex(['2011-01-01', '2011-01-03', '2011-01-05',
+                            '2011-01-02', '2011-01-01'], freq='D', name='idx1')
+        exp1 = PeriodIndex(['2011-01-01', '2011-01-01', '2011-01-02',
+                            '2011-01-03', '2011-01-05'], freq='D', name='idx1')
+
+        idx2 = PeriodIndex(['2011-01-01', '2011-01-03', '2011-01-05',
+                            '2011-01-02', '2011-01-01'],
+                           freq='D',  name='idx2')
+        exp2 = PeriodIndex(['2011-01-01', '2011-01-01', '2011-01-02',
+                            '2011-01-03', '2011-01-05'],
+                           freq='D', name='idx2')
+
+        idx3 = PeriodIndex([pd.NaT, '2011-01-03', '2011-01-05',
+                            '2011-01-02', pd.NaT], freq='D', name='idx3')
+        exp3 = PeriodIndex([pd.NaT, pd.NaT, '2011-01-02', '2011-01-03',
+                            '2011-01-05'], freq='D', name='idx3')
+
+        for idx, expected in [(idx1, exp1), (idx1, exp1), (idx1, exp1)]:
+            ordered = idx.sort_values()
+            self.assert_index_equal(ordered, expected)
+            self.assertEqual(ordered.freq, 'D')
+
+            ordered = idx.sort_values(ascending=False)
+            self.assert_index_equal(ordered, expected[::-1])
+            self.assertEqual(ordered.freq, 'D')
+
+            ordered, indexer = idx.sort_values(return_indexer=True)
+            self.assert_index_equal(ordered, expected)
+            self.assert_numpy_array_equal(indexer, np.array([0, 4, 3, 1, 2]))
+            self.assertEqual(ordered.freq, 'D')
+
+            ordered, indexer = idx.sort_values(return_indexer=True, ascending=False)
+            self.assert_index_equal(ordered, expected[::-1])
+            self.assert_numpy_array_equal(indexer, np.array([2, 1, 3, 4, 0]))
+            self.assertEqual(ordered.freq, 'D')
+
+    def test_getitem(self):
+        idx1 = pd.period_range('2011-01-01', '2011-01-31', freq='D', name='idx')
+
+        for idx in [idx1]:
+            result = idx[0]
+            self.assertEqual(result, pd.Period('2011-01-01', freq='D'))
+
+            result = idx[-1]
+            self.assertEqual(result, pd.Period('2011-01-31', freq='D'))
+
+            result = idx[0:5]
+            expected = pd.period_range('2011-01-01', '2011-01-05', freq='D',
+                                       name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx[0:10:2]
+            expected = pd.PeriodIndex(['2011-01-01', '2011-01-03', '2011-01-05',
+                                       '2011-01-07', '2011-01-09'],
+                                      freq='D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx[-20:-5:3]
+            expected = pd.PeriodIndex(['2011-01-12', '2011-01-15', '2011-01-18',
+                                       '2011-01-21', '2011-01-24'],
+                                      freq='D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx[4::-1]
+            expected = PeriodIndex(['2011-01-05', '2011-01-04', '2011-01-03',
+                                   '2011-01-02', '2011-01-01'],
+                                   freq='D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+    def test_take(self):
+        #GH 10295
+        idx1 = pd.period_range('2011-01-01', '2011-01-31', freq='D', name='idx')
+
+        for idx in [idx1]:
+            result = idx.take([0])
+            self.assertEqual(result, pd.Period('2011-01-01', freq='D'))
+
+            result = idx.take([5])
+            self.assertEqual(result, pd.Period('2011-01-06', freq='D'))
+
+            result = idx.take([0, 1, 2])
+            expected = pd.period_range('2011-01-01', '2011-01-03', freq='D',
+                                       name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx.take([0, 2, 4])
+            expected = pd.PeriodIndex(['2011-01-01', '2011-01-03', '2011-01-05'],
+                                      freq='D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx.take([7, 4, 1])
+            expected = pd.PeriodIndex(['2011-01-08', '2011-01-05', '2011-01-02'],
+                                      freq='D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx.take([3, 2, 5])
+            expected = PeriodIndex(['2011-01-04', '2011-01-03', '2011-01-06'],
+                                   freq='D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
+
+            result = idx.take([-3, 2, 5])
+            expected = PeriodIndex(['2011-01-29', '2011-01-03', '2011-01-06'],
+                                   freq='D', name='idx')
+            self.assert_index_equal(result, expected)
+            self.assertEqual(result.freq, expected.freq)
 
 
 if __name__ == '__main__':

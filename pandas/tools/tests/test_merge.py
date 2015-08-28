@@ -737,6 +737,88 @@ class TestMerge(tm.TestCase):
         result = merge(right, left, on='key', how='right')
         assert_frame_equal(result, left)
 
+    def test_merge_left_empty_right_empty(self):
+        # GH 10824
+        left = pd.DataFrame([], columns=['a', 'b', 'c'])
+        right = pd.DataFrame([], columns=['x', 'y', 'z'])
+
+        exp_in = pd.DataFrame([], columns=['a', 'b', 'c', 'x', 'y', 'z'],
+                              dtype=object)
+
+        for kwarg in [dict(left_index=True, right_index=True),
+                      dict(left_index=True, right_on='x'),
+                      dict(left_on='a', right_index=True),
+                      dict(left_on='a', right_on='x')]:
+
+            result = pd.merge(left, right, how='inner', **kwarg)
+            tm.assert_frame_equal(result, exp_in)
+            result = pd.merge(left, right, how='left', **kwarg)
+            tm.assert_frame_equal(result, exp_in)
+            result = pd.merge(left, right, how='right', **kwarg)
+            tm.assert_frame_equal(result, exp_in)
+            result = pd.merge(left, right, how='outer', **kwarg)
+            tm.assert_frame_equal(result, exp_in)
+
+    def test_merge_left_empty_right_notempty(self):
+        # GH 10824
+        left = pd.DataFrame([], columns=['a', 'b', 'c'])
+        right = pd.DataFrame([[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+                             columns=['x', 'y', 'z'])
+
+        exp_out = pd.DataFrame({'a': np.array([np.nan]*3, dtype=object),
+                                'b': np.array([np.nan]*3, dtype=object),
+                                'c': np.array([np.nan]*3, dtype=object),
+                                'x': [1, 4, 7],
+                                'y': [2, 5, 8],
+                                'z': [3, 6, 9]},
+                               columns=['a', 'b', 'c', 'x', 'y', 'z'])
+        exp_in = exp_out[0:0] # make empty DataFrame keeping dtype
+
+        for kwarg in [dict(left_index=True, right_index=True),
+                      dict(left_index=True, right_on='x'),
+                      dict(left_on='a', right_index=True),
+                      dict(left_on='a', right_on='x')]:
+
+            result = pd.merge(left, right, how='inner', **kwarg)
+            tm.assert_frame_equal(result, exp_in)
+            result = pd.merge(left, right, how='left', **kwarg)
+            tm.assert_frame_equal(result, exp_in)
+
+            result = pd.merge(left, right, how='right', **kwarg)
+            tm.assert_frame_equal(result, exp_out)
+            result = pd.merge(left, right, how='outer', **kwarg)
+            tm.assert_frame_equal(result, exp_out)
+
+    def test_merge_left_notempty_right_empty(self):
+        # GH 10824
+        left = pd.DataFrame([[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+                            columns=['a', 'b', 'c'])
+        right = pd.DataFrame([], columns=['x', 'y', 'z'])
+
+        exp_out = pd.DataFrame({'a': [1, 4, 7],
+                                'b': [2, 5, 8],
+                                'c': [3, 6, 9],
+                                'x': np.array([np.nan]*3, dtype=object),
+                                'y': np.array([np.nan]*3, dtype=object),
+                                'z': np.array([np.nan]*3, dtype=object)},
+                               columns=['a', 'b', 'c', 'x', 'y', 'z'])
+        exp_in = exp_out[0:0] # make empty DataFrame keeping dtype
+
+        for kwarg in [dict(left_index=True, right_index=True),
+                      dict(left_index=True, right_on='x'),
+                      dict(left_on='a', right_index=True),
+                      dict(left_on='a', right_on='x')]:
+
+            result = pd.merge(left, right, how='inner', **kwarg)
+            tm.assert_frame_equal(result, exp_in)
+            result = pd.merge(left, right, how='right', **kwarg)
+            tm.assert_frame_equal(result, exp_in)
+
+            result = pd.merge(left, right, how='left', **kwarg)
+            tm.assert_frame_equal(result, exp_out)
+            result = pd.merge(left, right, how='outer', **kwarg)
+            tm.assert_frame_equal(result, exp_out)
+
     def test_merge_nosort(self):
         # #2098, anything to do?
 
@@ -790,7 +872,7 @@ class TestMerge(tm.TestCase):
         nad = NotADataFrame(self.df)
         result = nad.merge(self.df2, on='key1')
 
-        tm.assert_isinstance(result, NotADataFrame)
+        tm.assertIsInstance(result, NotADataFrame)
 
     def test_append_dtype_coerce(self):
 
@@ -843,7 +925,6 @@ class TestMerge(tm.TestCase):
         assert_frame_equal(result, expected)
 
     def test_overlapping_columns_error_message(self):
-        # #2649
         df = DataFrame({'key': [1, 2, 3],
                         'v1': [4, 5, 6],
                         'v2': [7, 8, 9]})
@@ -853,7 +934,16 @@ class TestMerge(tm.TestCase):
 
         df.columns = ['key', 'foo', 'foo']
         df2.columns = ['key', 'bar', 'bar']
+        expected = DataFrame({'key': [1, 2, 3],
+                         'v1': [4, 5, 6],
+                         'v2': [7, 8, 9],
+                         'v3': [4, 5, 6],
+                         'v4': [7, 8, 9]})
+        expected.columns = ['key', 'foo', 'foo', 'bar', 'bar']
+        assert_frame_equal(merge(df, df2), expected)
 
+        # #2649, #10639
+        df2.columns = ['key1', 'foo', 'foo']
         self.assertRaises(ValueError, merge, df, df2)
 
 def _check_merge(x, y):
@@ -902,8 +992,8 @@ class TestMergeMulti(tm.TestCase):
         assert_frame_equal(joined, expected.ix[:, joined.columns])
 
         left = self.data.join(self.to_join, on=['key1', 'key2'], sort=True)
-        right = expected.ix[:, joined.columns].sort(['key1', 'key2'],
-                                                    kind='mergesort')
+        right = expected.ix[:, joined.columns].sort_values(['key1', 'key2'],
+                                                           kind='mergesort')
         assert_frame_equal(left, right)
 
     def test_left_join_multi_index(self):
@@ -922,12 +1012,14 @@ class TestMergeMulti(tm.TestCase):
                 self.assertFalse(res['4th'].isnull().any())
                 self.assertFalse(res['5th'].isnull().any())
 
-                tm.assert_series_equal(res['4th'], - res['5th'])
-                tm.assert_series_equal(res['4th'], bind_cols(res.iloc[:, :-2]))
+                tm.assert_series_equal(res['4th'], - res['5th'], check_names=False)
+                result = bind_cols(res.iloc[:, :-2])
+                tm.assert_series_equal(res['4th'], result, check_names=False)
+                self.assertTrue(result.name is None)
 
                 if sort:
                     tm.assert_frame_equal(res,
-                                          res.sort(icols, kind='mergesort'))
+                                          res.sort_values(icols, kind='mergesort'))
 
                 out = merge(left, right.reset_index(), on=icols,
                             sort=sort, how='left')
@@ -1007,7 +1099,7 @@ class TestMergeMulti(tm.TestCase):
         expected.loc[(expected.k1 == 1) & (expected.k2 == 'foo'),'v2'] = 7
 
         tm.assert_frame_equal(result, expected)
-        tm.assert_frame_equal(result.sort(['k1', 'k2'], kind='mergesort'),
+        tm.assert_frame_equal(result.sort_values(['k1', 'k2'], kind='mergesort'),
                               left.join(right, on=['k1', 'k2'], sort=True))
 
         # test join with multi dtypes blocks
@@ -1027,7 +1119,7 @@ class TestMergeMulti(tm.TestCase):
         expected.loc[(expected.k1 == 1) & (expected.k2 == 'foo'),'v2'] = 7
 
         tm.assert_frame_equal(result, expected)
-        tm.assert_frame_equal(result.sort(['k1', 'k2'], kind='mergesort'),
+        tm.assert_frame_equal(result.sort_values(['k1', 'k2'], kind='mergesort'),
                               left.join(right, on=['k1', 'k2'], sort=True))
 
         # do a right join for an extra test
@@ -1094,7 +1186,7 @@ class TestMergeMulti(tm.TestCase):
                            how='left', sort=True)
 
         tm.assert_frame_equal(result,
-                expected.sort(['cola', 'colb', 'colc'], kind='mergesort'))
+                expected.sort_values(['cola', 'colb', 'colc'], kind='mergesort'))
 
         # GH7331 - maintain left frame order in left merge
         right.reset_index(inplace=True)
@@ -1141,7 +1233,7 @@ class TestMergeMulti(tm.TestCase):
         tm.assert_frame_equal(result, expected)
 
         result = left.join(right, on='tag', how='left', sort=True)
-        tm.assert_frame_equal(result, expected.sort('tag', kind='mergesort'))
+        tm.assert_frame_equal(result, expected.sort_values('tag', kind='mergesort'))
 
         # GH7331 - maintain left frame order in left merge
         result = merge(left, right.reset_index(), how='left', on='tag')
@@ -1172,7 +1264,7 @@ class TestMergeMulti(tm.TestCase):
             tm.assert_frame_equal(result, expected)
 
             result = left.join(right, on=['k1', 'k2'], sort=True)
-            expected.sort(['k1', 'k2'], kind='mergesort', inplace=True)
+            expected.sort_values(['k1', 'k2'], kind='mergesort', inplace=True)
             tm.assert_frame_equal(result, expected)
 
         for d1 in [np.int64,np.int32,np.int16,np.int8,np.uint8]:
@@ -1250,10 +1342,12 @@ class TestMergeMulti(tm.TestCase):
 
         out = merge(left, right, how='outer')
         self.assertEqual(len(out), len(left))
-        assert_series_equal(out['left'], - out['right'])
-        assert_series_equal(out['left'], out.iloc[:, :-2].sum(axis=1))
+        assert_series_equal(out['left'], - out['right'], check_names=False)
+        result = out.iloc[:, :-2].sum(axis=1)
+        assert_series_equal(out['left'], result, check_names=False)
+        self.assertTrue(result.name is None)
 
-        out.sort(out.columns.tolist(), inplace=True)
+        out.sort_values(out.columns.tolist(), inplace=True)
         out.index = np.arange(len(out))
         for how in ['left', 'right', 'outer', 'inner']:
             assert_frame_equal(out, merge(left, right, how=how, sort=True))
@@ -1317,14 +1411,14 @@ class TestMergeMulti(tm.TestCase):
                     vals.append(k + tuple([np.nan, rv]))
 
         def align(df):
-            df = df.sort(df.columns.tolist())
+            df = df.sort_values(df.columns.tolist())
             df.index = np.arange(len(df))
             return df
 
         def verify_order(df):
             kcols = list('ABCDEFG')
             assert_frame_equal(df[kcols].copy(),
-                               df[kcols].sort(kcols, kind='mergesort'))
+                               df[kcols].sort_values(kcols, kind='mergesort'))
 
         out = DataFrame(vals, columns=list('ABCDEFG') + ['left', 'right'])
         out = align(out)
@@ -1990,6 +2084,13 @@ class TestConcatenate(tm.TestCase):
         result = df.append(df)
         assert_frame_equal(result, expected)
 
+    def test_with_mixed_tuples(self):
+        # 10697
+        # columns have mixed tuples, so handle properly
+        df1 = DataFrame({ u'A' : 'foo', (u'B',1) : 'bar' },index=range(2))
+        df2 = DataFrame({ u'B' : 'foo', (u'B',1) : 'bar' },index=range(2))
+        result = concat([df1,df2])
+
     def test_join_dups(self):
 
         # joining dups
@@ -2531,8 +2632,25 @@ class TestOrderedMerge(tm.TestCase):
         nad = NotADataFrame(self.left)
         result = nad.merge(self.right, on='key')
 
-        tm.assert_isinstance(result, NotADataFrame)
+        tm.assertIsInstance(result, NotADataFrame)
 
+    def test_empty_sequence_concat(self):
+        # GH 9157
+        empty_pat = "[Nn]o objects"
+        none_pat = "objects.*None"
+        test_cases = [
+            ((), empty_pat),
+            ([], empty_pat),
+            ({}, empty_pat),
+            ([None], none_pat),
+            ([None, None], none_pat)
+        ]
+        for df_seq, pattern in test_cases:
+            assertRaisesRegexp(ValueError, pattern, pd.concat, df_seq)
+
+        pd.concat([pd.DataFrame()])
+        pd.concat([None, pd.DataFrame()])
+        pd.concat([pd.DataFrame(), None])
 
 if __name__ == '__main__':
     nose.runmodule(argv=[__file__, '-vvs', '-x', '--pdb', '--pdb-failure'],

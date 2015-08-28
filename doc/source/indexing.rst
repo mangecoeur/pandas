@@ -6,15 +6,10 @@
    :suppress:
 
    import numpy as np
-   import random
    np.random.seed(123456)
-   from pandas import *
-   options.display.max_rows=15
-   import pandas as pd
-   randn = np.random.randn
-   randint = np.random.randint
    np.set_printoptions(precision=4, suppress=True)
-   from pandas.compat import range, zip
+   import pandas as pd
+   pd.options.display.max_rows=15
 
 ***************************
 Indexing and Selecting Data
@@ -30,9 +25,9 @@ The axis labeling information in pandas objects serves many purposes:
 In this section, we will focus on the final point: namely, how to slice, dice,
 and generally get and set subsets of pandas objects. The primary focus will be
 on Series and DataFrame as they have received more development attention in
-this area. Expect more work to be invested higher-dimensional data structures
-(including ``Panel``) in the future, especially in label-based advanced
-indexing.
+this area. Expect more work to be invested in higher-dimensional data
+structures (including ``Panel``) in the future, especially in label-based
+advanced indexing.
 
 .. note::
 
@@ -54,7 +49,7 @@ indexing.
 
 .. warning::
 
-   In 0.15.0 ``Index`` has internally been refactored to no longer sub-class ``ndarray``
+   In 0.15.0 ``Index`` has internally been refactored to no longer subclass ``ndarray``
    but instead subclass ``PandasObject``, similarly to the rest of the pandas objects. This should be
    a transparent change with only very limited API implications (See the :ref:`Internal Refactoring <whatsnew_0150.refactoring>`)
 
@@ -126,18 +121,6 @@ the specification are assumed to be ``:``. (e.g. ``p.loc['a']`` is equiv to
     DataFrame; ``df.loc[row_indexer,column_indexer]``
     Panel; ``p.loc[item_indexer,major_indexer,minor_indexer]``
 
-Deprecations
-------------
-
-Beginning with version 0.11.0, it's recommended that you transition away from
-the following methods as they *may* be deprecated in future versions.
-
-  - ``irow``
-  - ``icol``
-  - ``iget_value``
-
-See the section :ref:`Selection by Position <indexing.integer>` for substitutes.
-
 .. _indexing.basics:
 
 Basics
@@ -162,10 +145,10 @@ indexing functionality:
 
 .. ipython:: python
 
-   dates = date_range('1/1/2000', periods=8)
-   df = DataFrame(randn(8, 4), index=dates, columns=['A', 'B', 'C', 'D'])
+   dates = pd.date_range('1/1/2000', periods=8)
+   df = pd.DataFrame(np.random.randn(8, 4), index=dates, columns=['A', 'B', 'C', 'D'])
    df
-   panel = Panel({'one' : df, 'two' : df - df.mean()})
+   panel = pd.Panel({'one' : df, 'two' : df - df.mean()})
    panel
 
 .. note::
@@ -208,7 +191,7 @@ as an attribute:
 
 .. ipython:: python
 
-   sa = Series([1,2,3],index=list('abc'))
+   sa = pd.Series([1,2,3],index=list('abc'))
    dfa = df.copy()
 
 .. ipython:: python
@@ -225,9 +208,9 @@ new column.
 
    sa.a = 5
    sa
-   dfa.A = list(range(len(dfa.index)))       # ok if A already exists
+   dfa.A = list(range(len(dfa.index)))  # ok if A already exists
    dfa
-   dfa['A'] = list(range(len(dfa.index)))    # use this form to create a new column
+   dfa['A'] = list(range(len(dfa.index)))  # use this form to create a new column
    dfa
 
 .. warning::
@@ -248,6 +231,14 @@ new column.
 
 If you are using the IPython environment, you may also use tab-completion to
 see these accessible attributes.
+
+You can also assign a ``dict`` to a row of a ``DataFrame``:
+
+.. ipython:: python
+
+   x = pd.DataFrame({'x': [1, 2, 3], 'y': [3, 4, 5]})
+   x.iloc[1] = dict(x=9, y=99)
+   x
 
 Slicing ranges
 --------------
@@ -299,7 +290,7 @@ Selection By Label
 
   .. ipython:: python
 
-     dfl = DataFrame(np.random.randn(5,4), columns=list('ABCD'), index=date_range('20130101',periods=5))
+     dfl = pd.DataFrame(np.random.randn(5,4), columns=list('ABCD'), index=pd.date_range('20130101',periods=5))
      dfl
 
   .. code-block:: python
@@ -314,7 +305,7 @@ Selection By Label
      dfl.loc['20130102':'20130104']
 
 pandas provides a suite of methods in order to have **purely label based indexing**. This is a strict inclusion based protocol.
-**at least 1** of the labels for which you ask, must be in the index or a ``KeyError`` will be raised! When slicing, the start bound is *included*, **AND** the stop bound is *included*. Integers are valid labels, but they refer to the label **and not the position**.
+**At least 1** of the labels for which you ask, must be in the index or a ``KeyError`` will be raised! When slicing, the start bound is *included*, **AND** the stop bound is *included*. Integers are valid labels, but they refer to the label **and not the position**.
 
 The ``.loc`` attribute is the primary access method. The following are valid inputs:
 
@@ -325,7 +316,7 @@ The ``.loc`` attribute is the primary access method. The following are valid inp
 
 .. ipython:: python
 
-   s1 = Series(np.random.randn(6),index=list('abcdef'))
+   s1 = pd.Series(np.random.randn(6),index=list('abcdef'))
    s1
    s1.loc['c':]
    s1.loc['b']
@@ -341,9 +332,9 @@ With a DataFrame
 
 .. ipython:: python
 
-   df1 = DataFrame(np.random.randn(6,4),
-                   index=list('abcdef'),
-                   columns=list('ABCD'))
+   df1 = pd.DataFrame(np.random.randn(6,4),
+                      index=list('abcdef'),
+                      columns=list('ABCD'))
    df1
    df1.loc[['a','b','d'],:]
 
@@ -395,7 +386,7 @@ The ``.iloc`` attribute is the primary access method. The following are valid in
 
 .. ipython:: python
 
-   s1 = Series(np.random.randn(5),index=list(range(0,10,2)))
+   s1 = pd.Series(np.random.randn(5), index=list(range(0,10,2)))
    s1
    s1.iloc[:3]
    s1.iloc[3]
@@ -411,9 +402,9 @@ With a DataFrame
 
 .. ipython:: python
 
-   df1 = DataFrame(np.random.randn(6,4),
-                   index=list(range(0,12,2)),
-                   columns=list(range(0,8,2)))
+   df1 = pd.DataFrame(np.random.randn(6,4),
+                      index=list(range(0,12,2)),
+                      columns=list(range(0,8,2)))
    df1
 
 Select via integer slicing
@@ -429,19 +420,13 @@ Select via integer list
 
    df1.iloc[[1,3,5],[1,3]]
 
-For slicing rows explicitly (equiv to deprecated ``df.irow(slice(1,3))``).
-
 .. ipython:: python
 
    df1.iloc[1:3,:]
 
-For slicing columns explicitly (equiv to deprecated ``df.icol(slice(1,3))``).
-
 .. ipython:: python
 
    df1.iloc[:,1:3]
-
-For getting a scalar via integer position (equiv to deprecated ``df.get_value(1,1)``)
 
 .. ipython:: python
 
@@ -464,7 +449,7 @@ Out of range slice indexes are handled gracefully just as in Python/Numpy.
     x
     x[4:10]
     x[8:10]
-    s = Series(x)
+    s = pd.Series(x)
     s
     s.iloc[4:10]
     s.iloc[8:10]
@@ -480,7 +465,7 @@ returned)
 
 .. ipython:: python
 
-   dfl = DataFrame(np.random.randn(5,2),columns=list('AB'))
+   dfl = pd.DataFrame(np.random.randn(5,2), columns=list('AB'))
    dfl
    dfl.iloc[:,2:3]
    dfl.iloc[:,1:3]
@@ -500,6 +485,81 @@ A list of indexers where any element is out of bounds will raise an
 
 .. _indexing.basics.partial_setting:
 
+Selecting Random Samples
+------------------------
+.. versionadded::0.16.1
+
+A random selection of rows or columns from a Series, DataFrame, or Panel with the :meth:`~DataFrame.sample` method. The method will sample rows by default, and accepts a specific number of rows/columns to return, or a fraction of rows.
+
+.. ipython :: python
+
+    s = pd.Series([0,1,2,3,4,5])
+
+    # When no arguments are passed, returns 1 row.
+    s.sample()
+
+    # One may specify either a number of rows:
+    s.sample(n=3)
+
+    # Or a fraction of the rows:
+    s.sample(frac=0.5)
+
+By default, ``sample`` will return each row at most once, but one can also sample with replacement
+using the ``replace`` option:
+
+.. ipython :: python
+
+   s = pd.Series([0,1,2,3,4,5])
+
+    # Without replacement (default):
+    s.sample(n=6, replace=False)
+
+    # With replacement:
+    s.sample(n=6, replace=True)
+
+
+By default, each row has an equal probability of being selected, but if you want rows
+to have different probabilities, you can pass the ``sample`` function sampling weights as
+``weights``. These weights can be a list, a numpy array, or a Series, but they must be of the same length as the object you are sampling. Missing values will be treated as a weight of zero, and inf values are not allowed. If weights do not sum to 1, they will be re-normalized by dividing all weights by the sum of the weights. For example:
+
+.. ipython :: python
+
+    s = pd.Series([0,1,2,3,4,5])
+    example_weights = [0, 0, 0.2, 0.2, 0.2, 0.4]
+    s.sample(n=3, weights=example_weights)
+
+    # Weights will be re-normalized automatically
+    example_weights2 = [0.5, 0, 0, 0, 0, 0]
+    s.sample(n=1, weights=example_weights2)
+
+When applied to a DataFrame, you can use a column of the DataFrame as sampling weights
+(provided you are sampling rows and not columns) by simply passing the name of the column
+as a string.
+
+.. ipython :: python
+
+    df2 = pd.DataFrame({'col1':[9,8,7,6], 'weight_column':[0.5, 0.4, 0.1, 0]})
+    df2.sample(n = 3, weights = 'weight_column')
+
+``sample`` also allows users to sample columns instead of rows using the ``axis`` argument.
+
+.. 	ipython :: python
+
+    df3 = pd.DataFrame({'col1':[1,2,3], 'col2':[2,3,4]})
+    df3.sample(n=1, axis=1)
+
+Finally, one can also set a seed for ``sample``'s random number generator using the ``random_state`` argument, which will accept either an integer (as a seed) or a numpy RandomState object.
+
+.. 	ipython :: python
+
+    df4 = pd.DataFrame({'col1':[1,2,3], 'col2':[2,3,4]})
+
+    # With a given seed, the sample will always draw the same rows.
+    df4.sample(n=2, random_state=2)
+    df4.sample(n=2, random_state=2)
+
+
+
 Setting With Enlargement
 ------------------------
 
@@ -511,7 +571,7 @@ In the ``Series`` case this is effectively an appending operation
 
 .. ipython:: python
 
-   se = Series([1,2,3])
+   se = pd.Series([1,2,3])
    se
    se[5] = 5.
    se
@@ -520,7 +580,7 @@ A ``DataFrame`` can be enlarged on either axis via ``.loc``
 
 .. ipython:: python
 
-   dfi = DataFrame(np.arange(6).reshape(3,2),
+   dfi = pd.DataFrame(np.arange(6).reshape(3,2),
                    columns=['A','B'])
    dfi
    dfi.loc[:,'C'] = dfi.loc[:,'A']
@@ -578,9 +638,10 @@ Using a boolean vector to index a Series works exactly as in a numpy ndarray:
 
 .. ipython:: python
 
+   s = pd.Series(range(-3, 4))
+   s
    s[s > 0]
-   s[(s < 0) & (s > -0.5)]
-   s[(s < -1) | (s > 1 )]
+   s[(s < -1) | (s > 0.5)]
    s[~(s < 0)]
 
 You may select rows from a DataFrame using a boolean vector the same length as
@@ -596,9 +657,9 @@ more complex criteria:
 
 .. ipython:: python
 
-   df2 = DataFrame({'a' : ['one', 'one', 'two', 'three', 'two', 'one', 'six'],
-                    'b' : ['x', 'y', 'y', 'x', 'y', 'x', 'x'],
-                    'c' : randn(7)})
+   df2 = pd.DataFrame({'a' : ['one', 'one', 'two', 'three', 'two', 'one', 'six'],
+                       'b' : ['x', 'y', 'y', 'x', 'y', 'x', 'x'],
+                       'c' : np.random.randn(7)})
 
    # only want 'two' or 'three'
    criterion = df2['a'].map(lambda x: x.startswith('t'))
@@ -629,7 +690,7 @@ select rows where one or more columns have values you want:
 
 .. ipython:: python
 
-   s = Series(np.arange(5),index=np.arange(5)[::-1],dtype='int64')
+   s = pd.Series(np.arange(5), index=np.arange(5)[::-1], dtype='int64')
    s
    s.isin([2, 4, 6])
    s[s.isin([2, 4, 6])]
@@ -649,8 +710,8 @@ in the membership check:
 
 .. ipython:: python
 
-   s_mi = Series(np.arange(6),
-                 index=pd.MultiIndex.from_product([[0, 1], ['a', 'b', 'c']]))
+   s_mi = pd.Series(np.arange(6),
+                    index=pd.MultiIndex.from_product([[0, 1], ['a', 'b', 'c']]))
    s_mi
    s_mi.iloc[s_mi.index.isin([(1, 'a'), (2, 'b'), (0, 'c')])]
    s_mi.iloc[s_mi.index.isin(['a', 'c', 'e'], level=1)]
@@ -662,8 +723,8 @@ wherever the element is in the sequence of values.
 
 .. ipython:: python
 
-   df = DataFrame({'vals': [1, 2, 3, 4], 'ids': ['a', 'b', 'f', 'n'],
-                   'ids2': ['a', 'n', 'c', 'n']})
+   df = pd.DataFrame({'vals': [1, 2, 3, 4], 'ids': ['a', 'b', 'f', 'n'],
+                      'ids2': ['a', 'n', 'c', 'n']})
 
    values = ['a', 'b', 1, 3]
 
@@ -717,8 +778,8 @@ Equivalent is ``df.where(df < 0)``
 .. ipython:: python
    :suppress:
 
-   dates = date_range('1/1/2000', periods=8)
-   df = DataFrame(randn(8, 4), index=dates, columns=['A', 'B', 'C', 'D'])
+   dates = pd.date_range('1/1/2000', periods=8)
+   df = pd.DataFrame(np.random.randn(8, 4), index=dates, columns=['A', 'B', 'C', 'D'])
 
 .. ipython:: python
 
@@ -806,15 +867,9 @@ You can get the value of the frame where column ``b`` has values
 between the values of columns ``a`` and ``c``. For example:
 
 .. ipython:: python
-   :suppress:
-
-   from numpy.random import randint, rand
-   np.random.seed(1234)
-
-.. ipython:: python
 
    n = 10
-   df = DataFrame(rand(n, 3), columns=list('abc'))
+   df = pd.DataFrame(np.random.rand(n, 3), columns=list('abc'))
    df
 
    # pure python
@@ -828,7 +883,7 @@ with the name ``a``.
 
 .. ipython:: python
 
-   df = DataFrame(randint(n / 2, size=(n, 2)), columns=list('bc'))
+   df = pd.DataFrame(np.random.randint(n / 2, size=(n, 2)), columns=list('bc'))
    df.index.name = 'a'
    df
    df.query('a < b and b < c')
@@ -844,7 +899,7 @@ If instead you don't want to or cannot name your index, you can use the name
 
 .. ipython:: python
 
-   df = DataFrame(randint(n, size=(n, 2)), columns=list('bc'))
+   df = pd.DataFrame(np.random.randint(n, size=(n, 2)), columns=list('bc'))
    df
    df.query('index < b < c')
 
@@ -862,7 +917,7 @@ If instead you don't want to or cannot name your index, you can use the name
 
    .. ipython:: python
 
-      df = DataFrame({'a': randint(5, size=5)})
+      df = pd.DataFrame({'a': np.random.randint(5, size=5)})
       df.index.name = 'a'
       df.query('a > 2') # uses the column 'a', not the index
 
@@ -886,22 +941,19 @@ You can also use the levels of a ``DataFrame`` with a
 
 .. ipython:: python
 
-   import pandas.util.testing as tm
-
    n = 10
-   colors = tm.choice(['red', 'green'], size=n)
-   foods = tm.choice(['eggs', 'ham'], size=n)
+   colors = np.random.choice(['red', 'green'], size=n)
+   foods = np.random.choice(['eggs', 'ham'], size=n)
    colors
    foods
 
-   index = MultiIndex.from_arrays([colors, foods], names=['color', 'food'])
-   df = DataFrame(randn(n, 2), index=index)
+   index = pd.MultiIndex.from_arrays([colors, foods], names=['color', 'food'])
+   df = pd.DataFrame(np.random.randn(n, 2), index=index)
    df
    df.query('color == "red"')
 
 If the levels of the ``MultiIndex`` are unnamed, you can refer to them using
 special names:
-
 
 .. ipython:: python
 
@@ -924,9 +976,9 @@ having to specify which frame you're interested in querying
 
 .. ipython:: python
 
-   df = DataFrame(rand(n, 3), columns=list('abc'))
+   df = pd.DataFrame(np.random.rand(n, 3), columns=list('abc'))
    df
-   df2 = DataFrame(rand(n + 2, 3), columns=df.columns)
+   df2 = pd.DataFrame(np.random.rand(n + 2, 3), columns=df.columns)
    df2
    expr = '0.0 <= a <= c <= 0.5'
    map(lambda frame: frame.query(expr), [df, df2])
@@ -938,7 +990,7 @@ Full numpy-like syntax
 
 .. ipython:: python
 
-   df = DataFrame(randint(n, size=(n, 3)), columns=list('abc'))
+   df = pd.DataFrame(np.random.randint(n, size=(n, 3)), columns=list('abc'))
    df
    df.query('(a < b) & (b < c)')
    df[(df.a < df.b) & (df.b < df.c)]
@@ -981,8 +1033,9 @@ The ``in`` and ``not in`` operators
 .. ipython:: python
 
    # get all rows where columns "a" and "b" have overlapping values
-   df = DataFrame({'a': list('aabbccddeeff'), 'b': list('aaaabbbbcccc'),
-                   'c': randint(5, size=12), 'd': randint(9, size=12)})
+   df = pd.DataFrame({'a': list('aabbccddeeff'), 'b': list('aaaabbbbcccc'),
+                      'c': np.random.randint(5, size=12),
+                      'd': np.random.randint(9, size=12)})
    df
    df.query('a in b')
 
@@ -1055,8 +1108,8 @@ You can negate boolean expressions with the word ``not`` or the ``~`` operator.
 
 .. ipython:: python
 
-   df = DataFrame(rand(n, 3), columns=list('abc'))
-   df['bools'] = rand(len(df)) > 0.5
+   df = pd.DataFrame(np.random.rand(n, 3), columns=list('abc'))
+   df['bools'] = np.random.rand(len(df)) > 0.5
    df.query('~bools')
    df.query('not bools')
    df.query('not bools') == df[~df.bools]
@@ -1108,7 +1161,7 @@ floating point values generated using ``numpy.random.randn()``.
 .. ipython:: python
    :suppress:
 
-   df = DataFrame(randn(8, 4), index=dates, columns=['A', 'B', 'C', 'D'])
+   df = pd.DataFrame(np.random.randn(8, 4), index=dates, columns=['A', 'B', 'C', 'D'])
    df2 = df.copy()
 
 
@@ -1125,17 +1178,45 @@ takes as an argument the columns to use to identify duplicated rows.
 - ``drop_duplicates`` removes duplicate rows.
 
 By default, the first observed row of a duplicate set is considered unique, but
-each method has a ``take_last`` parameter that indicates the last observed row
-should be taken instead.
+each method has a ``keep`` parameter to specify targets to be kept.
+
+- ``keep='first'`` (default): mark / drop duplicates except for the first occurrence.
+- ``keep='last'``: mark / drop duplicates except for the last occurrence.
+- ``keep=False``: mark  / drop all duplicates.
 
 .. ipython:: python
 
-   df2 = DataFrame({'a' : ['one', 'one', 'two', 'three', 'two', 'one', 'six'],
-                    'b' : ['x', 'y', 'y', 'x', 'y', 'x', 'x'],
-                    'c' : np.random.randn(7)})
-   df2.duplicated(['a','b'])
-   df2.drop_duplicates(['a','b'])
-   df2.drop_duplicates(['a','b'], take_last=True)
+   df2 = pd.DataFrame({'a': ['one', 'one', 'two', 'two', 'two', 'three', 'four'],
+                       'b': ['x', 'y', 'x', 'y', 'x', 'x', 'x'],
+                       'c': np.random.randn(7)})
+   df2
+   df2.duplicated('a')
+   df2.duplicated('a', keep='last')
+   df2.duplicated('a', keep=False)
+   df2.drop_duplicates('a')
+   df2.drop_duplicates('a', keep='last')
+   df2.drop_duplicates('a', keep=False)
+
+Also, you can pass a list of columns to identify duplications.
+
+.. ipython:: python
+
+   df2.duplicated(['a', 'b'])
+   df2.drop_duplicates(['a', 'b'])
+
+To drop duplicates by index value, use ``Index.duplicated`` then perform slicing.
+Same options are available in ``keep`` parameter.
+
+.. ipython:: python
+
+   df3 = pd.DataFrame({'a': np.arange(6),
+                       'b': np.random.randn(6)},
+                      index=['a', 'a', 'b', 'c', 'b', 'a'])
+   df3
+   df3.index.duplicated()
+   df3[~df3.index.duplicated()]
+   df3[~df3.index.duplicated(keep='last')]
+   df3[~df3.index.duplicated(keep=False)]
 
 .. _indexing.dictionarylike:
 
@@ -1147,7 +1228,7 @@ default value.
 
 .. ipython:: python
 
-   s = Series([1,2,3], index=['a','b','c'])
+   s = pd.Series([1,2,3], index=['a','b','c'])
    s.get('a')               # equivalent to s['a']
    s.get('x', default=-1)
 
@@ -1172,7 +1253,7 @@ numpy array.  For instance,
 
 .. ipython:: python
 
-  dflookup = DataFrame(np.random.rand(20,4), columns = ['A','B','C','D'])
+  dflookup = pd.DataFrame(np.random.rand(20,4), columns = ['A','B','C','D'])
   dflookup.lookup(list(range(0,10,2)), ['B','C','A','B','D'])
 
 .. _indexing.class:
@@ -1192,7 +1273,7 @@ lookups, data alignment, and reindexing. The easiest way to create an
 
 .. ipython:: python
 
-   index = Index(['e', 'd', 'a', 'b'])
+   index = pd.Index(['e', 'd', 'a', 'b'])
    index
    'd' in index
 
@@ -1201,25 +1282,25 @@ You can also pass a ``name`` to be stored in the index:
 
 .. ipython:: python
 
-   index = Index(['e', 'd', 'a', 'b'], name='something')
+   index = pd.Index(['e', 'd', 'a', 'b'], name='something')
    index.name
 
 The name, if set, will be shown in the console display:
 
 .. ipython:: python
 
-   index = Index(list(range(5)), name='rows')
-   columns = Index(['A', 'B', 'C'], name='cols')
-   df = DataFrame(np.random.randn(5, 3), index=index, columns=columns)
+   index = pd.Index(list(range(5)), name='rows')
+   columns = pd.Index(['A', 'B', 'C'], name='cols')
+   df = pd.DataFrame(np.random.randn(5, 3), index=index, columns=columns)
    df
    df['A']
+
+.. _indexing.set_metadata:
 
 Setting metadata
 ~~~~~~~~~~~~~~~~
 
 .. versionadded:: 0.13.0
-
-.. _indexing.set_metadata:
 
 Indexes are "mostly immutable", but it is possible to set and change their
 metadata, like the index ``name`` (or, for ``MultiIndex``, ``levels`` and
@@ -1233,7 +1314,7 @@ See :ref:`Advanced Indexing <advanced>` for usage of MultiIndexes.
 
 .. ipython:: python
 
-  ind = Index([1, 2, 3])
+  ind = pd.Index([1, 2, 3])
   ind.rename("apple")
   ind
   ind.set_names(["apple"], inplace=True)
@@ -1247,8 +1328,7 @@ See :ref:`Advanced Indexing <advanced>` for usage of MultiIndexes.
 
 .. ipython:: python
 
-
-  index = MultiIndex.from_product([range(3), ['one', 'two']], names=['first', 'second'])
+  index = pd.MultiIndex.from_product([range(3), ['one', 'two']], names=['first', 'second'])
   index
   index.levels[1]
   index.set_levels(["a", "b"], level=1)
@@ -1269,8 +1349,8 @@ operators. Difference is provided via the ``.difference()`` method.
 
 .. ipython:: python
 
-   a = Index(['c', 'b', 'a'])
-   b = Index(['c', 'e', 'd'])
+   a = pd.Index(['c', 'b', 'a'])
+   b = pd.Index(['c', 'e', 'd'])
    a | b
    a & b
    a.difference(b)
@@ -1282,8 +1362,8 @@ with duplicates dropped.
 
 .. ipython:: python
 
-   idx1 = Index([1, 2, 3, 4])
-   idx2 = Index([2, 3, 4, 5])
+   idx1 = pd.Index([1, 2, 3, 4])
+   idx2 = pd.Index([2, 3, 4, 5])
    idx1.sym_diff(idx2)
    idx1 ^ idx2
 
@@ -1306,10 +1386,10 @@ indexed DataFrame:
 .. ipython:: python
    :suppress:
 
-   data = DataFrame({'a' : ['bar', 'bar', 'foo', 'foo'],
-                     'b' : ['one', 'two', 'one', 'two'],
-                     'c' : ['z', 'y', 'x', 'w'],
-                     'd' : [1., 2., 3, 4]})
+   data = pd.DataFrame({'a' : ['bar', 'bar', 'foo', 'foo'],
+                        'b' : ['one', 'two', 'one', 'two'],
+                        'c' : ['z', 'y', 'x', 'w'],
+                        'd' : [1., 2., 3, 4]})
 
 .. ipython:: python
 
@@ -1387,12 +1467,12 @@ When setting values in a pandas object, care must be taken to avoid what is call
 
 .. ipython:: python
 
-   dfmi = DataFrame([list('abcd'),
-                     list('efgh'),
-                     list('ijkl'),
-                     list('mnop')],
-                    columns=MultiIndex.from_product([['one','two'],
-                                                     ['first','second']]))
+   dfmi = pd.DataFrame([list('abcd'),
+                        list('efgh'),
+                        list('ijkl'),
+                        list('mnop')],
+                       columns=pd.MultiIndex.from_product([['one','two'],
+                                                           ['first','second']]))
    dfmi
 
 Compare these two access methods:
@@ -1448,9 +1528,9 @@ which can take the values ``['raise','warn',None]``, where showing a warning is 
 .. ipython:: python
    :okwarning:
 
-   dfb = DataFrame({'a' : ['one', 'one', 'two',
-                           'three', 'two', 'one', 'six'],
-                    'c' : np.arange(7)})
+   dfb = pd.DataFrame({'a' : ['one', 'one', 'two',
+                              'three', 'two', 'one', 'six'],
+                       'c' : np.arange(7)})
 
    # This will show the SettingWithCopyWarning
    # but the frame values will be set
@@ -1478,7 +1558,7 @@ This is the correct access method
 
 .. ipython:: python
 
-   dfc = DataFrame({'A':['aaa','bbb','ccc'],'B':[1,2,3]})
+   dfc = pd.DataFrame({'A':['aaa','bbb','ccc'],'B':[1,2,3]})
    dfc.loc[0,'A'] = 11
    dfc
 

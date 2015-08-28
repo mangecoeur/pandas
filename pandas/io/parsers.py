@@ -14,6 +14,7 @@ from pandas.core.index import Index, MultiIndex
 from pandas.core.frame import DataFrame
 import datetime
 import pandas.core.common as com
+from pandas.core.common import AbstractMethodError
 from pandas.core.config import get_option
 from pandas.io.date_converters import generic_parser
 from pandas.io.common import get_filepath_or_buffer
@@ -24,6 +25,7 @@ from pandas.util.decorators import Appender
 import pandas.lib as lib
 import pandas.tslib as tslib
 import pandas.parser as _parser
+
 
 class ParserWarning(Warning):
     pass
@@ -55,8 +57,11 @@ escapechar : string (length 1), default None
 dtype : Type name or dict of column -> type
     Data type for data or columns. E.g. {'a': np.float64, 'b': np.int32}
     (Unsupported with engine='python')
-compression : {'gzip', 'bz2', None}, default None
-    For on-the-fly decompression of on-disk data
+compression : {'gzip', 'bz2', 'infer', None}, default 'infer'
+    For on-the-fly decompression of on-disk data. If 'infer', then use gzip or
+    bz2 if filepath_or_buffer is a string ending in '.gz' or '.bz2',
+    respectively, and no decompression otherwise. Set to None for no
+    decompression.
 dialect : string or csv.Dialect instance, default None
     If None defaults to Excel dialect. Ignored if sep longer than 1 char
     See csv.Dialect documentation for more details
@@ -82,7 +87,7 @@ names : array-like
     should explicitly pass header=None
 prefix : string, default None
     Prefix to add to column numbers when no header, e.g 'X' for X0, X1, ...
-na_values : list-like or dict, default None
+na_values : str, list-like or dict, default None
     Additional strings to recognize as NA/NaN. If dict passed, specific
     per-column NA values
 true_values : list
@@ -230,8 +235,10 @@ def _read(filepath_or_buffer, kwds):
     if skipfooter is not None:
         kwds['skip_footer'] = skipfooter
 
-    filepath_or_buffer, _ = get_filepath_or_buffer(filepath_or_buffer,
-                                                   encoding)
+    filepath_or_buffer, _, compression = get_filepath_or_buffer(filepath_or_buffer,
+                                                                encoding,
+                                                                compression=kwds.get('compression', None))
+    kwds['compression'] = compression
 
     if kwds.get('date_parser', None) is not None:
         if isinstance(kwds['parse_dates'], bool):
@@ -294,7 +301,7 @@ _parser_defaults = {
     'verbose': False,
     'encoding': None,
     'squeeze': False,
-    'compression': None,
+    'compression': 'infer',
     'mangle_dupe_cols': True,
     'tupleize_cols': False,
     'infer_datetime_format': False,
@@ -334,7 +341,7 @@ def _make_parser_function(name, sep=','):
     def parser_f(filepath_or_buffer,
                  sep=sep,
                  dialect=None,
-                 compression=None,
+                 compression='infer',
 
                  doublequote=True,
                  escapechar=None,
@@ -351,7 +358,6 @@ def _make_parser_function(name, sep=','):
                  skipfooter=None,
                  skip_footer=0,
                  na_values=None,
-                 na_fvalues=None,
                  true_values=None,
                  false_values=None,
                  delimiter=None,
@@ -399,8 +405,9 @@ def _make_parser_function(name, sep=','):
             delimiter = sep
 
         if delim_whitespace and delimiter is not default_sep:
-            raise ValueError("Specified a delimiter with both sep and"\
-                    " delim_whitespace=True; you can only specify one.")
+            raise ValueError("Specified a delimiter with both sep and"
+                             " delim_whitespace=True; you can only"
+                             " specify one.")
 
         if engine is not None:
             engine_specified = True
@@ -427,7 +434,6 @@ def _make_parser_function(name, sep=','):
                     prefix=prefix,
                     skiprows=skiprows,
                     na_values=na_values,
-                    na_fvalues=na_fvalues,
                     true_values=true_values,
                     false_values=false_values,
                     keep_default_na=keep_default_na,
@@ -652,6 +658,8 @@ class TextFileReader(object):
         # really delete this one
         keep_default_na = result.pop('keep_default_na')
 
+        if index_col is True:
+            raise ValueError("The value of index_col couldn't be 'True'")
         if _is_index_col(index_col):
             if not isinstance(index_col, (list, tuple, np.ndarray)):
                 index_col = [index_col]
@@ -705,7 +713,7 @@ class TextFileReader(object):
             self._engine = klass(self.f, **self.options)
 
     def _failover_to_python(self):
-        raise NotImplementedError
+        raise AbstractMethodError(self)
 
     def read(self, nrows=None):
         if nrows is not None:
@@ -793,6 +801,8 @@ class ParserBase(object):
                                      "when specifying a multi-index header")
 
         self._name_processed = False
+
+        self._first_chunk = True
 
     @property
     def _has_complex_date_col(self):
@@ -991,7 +1001,7 @@ class ParserBase(object):
                 try:
                     values = lib.map_infer(values, conv_f)
                 except ValueError:
-                    mask = lib.ismember(values, na_values).view(np.uin8)
+                    mask = lib.ismember(values, na_values).view(np.uint8)
                     values = lib.map_infer_mask(values, conv_f, mask)
                 coerce_type = False
 
@@ -1156,17 +1166,24 @@ class CParserWrapper(ParserBase):
         self._reader.set_error_bad_lines(int(status))
 
     def read(self, nrows=None):
-        if self.as_recarray:
-            # what to do if there are leading columns?
-            return self._reader.read(nrows)
-
         try:
             data = self._reader.read(nrows)
         except StopIteration:
-            if nrows is None:
-                return None, self.names, {}
+            if self._first_chunk:
+                self._first_chunk = False
+                return _get_empty_meta(self.orig_names,
+                                       self.index_col,
+                                       self.index_names,
+                                       dtype=self.kwds.get('dtype'))
             else:
                 raise
+
+        # Done with first read, next time raise StopIteration
+        self._first_chunk = False
+
+        if self.as_recarray:
+            # what to do if there are leading columns?
+            return data
 
         names = self.names
 
@@ -1314,14 +1331,12 @@ def _wrap_compressed(f, compression, encoding=None):
     """
     compression = compression.lower()
     encoding = encoding or get_option('display.encoding')
+
     if compression == 'gzip':
         import gzip
 
         f = gzip.GzipFile(fileobj=f)
-        if compat.PY3_2:
-            # 3.2's gzip doesn't support read1
-            f = StringIO(f.read().decode(encoding))
-        elif compat.PY3:
+        if compat.PY3:
             from io import TextIOWrapper
 
             f = TextIOWrapper(f)
@@ -1386,6 +1401,17 @@ class PythonParser(ParserBase):
         self.comment = kwds['comment']
         self._comment_lines = []
 
+        if self.compression == 'infer':
+            if isinstance(f, compat.string_types):
+                if f.endswith('.gz'):
+                    self.compression = 'gzip'
+                elif f.endswith('.bz2'):
+                    self.compression = 'bz2'
+                else:
+                    self.compression = None
+            else:
+                self.compression = None
+
         if isinstance(f, compat.string_types):
             f = com._get_handle(f, 'r', encoding=self.encoding,
                                 compression=self.compression)
@@ -1434,7 +1460,6 @@ class PythonParser(ParserBase):
             self._name_processed = True
             if self.index_names is None:
                 self.index_names = index_names
-        self._first_chunk = True
 
         if self.parse_dates:
             self._no_thousands_columns = self._set_no_thousands_columns()
@@ -1695,7 +1720,7 @@ class PythonParser(ParserBase):
             num_original_columns = ncols
             if not names:
                 if self.prefix:
-                    columns = [['%s%d' % (self.prefix,i) for i in range(ncols)]]
+                    columns = [['%s%d' % (self.prefix, i) for i in range(ncols)]]
                 else:
                     columns = [lrange(ncols)]
                 columns = self._handle_usecols(columns, columns[0])
@@ -2030,27 +2055,32 @@ def _make_date_converter(date_parser=None, dayfirst=False,
     def converter(*date_cols):
         if date_parser is None:
             strs = _concat_date_cols(date_cols)
+
             try:
-                return tools.to_datetime(
+                return tools._to_datetime(
                     com._ensure_object(strs),
                     utc=None,
                     box=False,
                     dayfirst=dayfirst,
+                    errors='ignore',
                     infer_datetime_format=infer_datetime_format
                 )
             except:
-                return lib.try_parse_dates(strs, dayfirst=dayfirst)
+                return tools.to_datetime(
+                    lib.try_parse_dates(strs, dayfirst=dayfirst))
         else:
             try:
-                result = date_parser(*date_cols)
+                result = tools.to_datetime(date_parser(*date_cols), errors='ignore')
                 if isinstance(result, datetime.datetime):
                     raise Exception('scalar parser')
                 return result
             except Exception:
                 try:
-                    return lib.try_parse_dates(_concat_date_cols(date_cols),
-                                               parser=date_parser,
-                                               dayfirst=dayfirst)
+                    return tools.to_datetime(
+                        lib.try_parse_dates(_concat_date_cols(date_cols),
+                                            parser=date_parser,
+                                            dayfirst=dayfirst),
+                        errors='ignore')
                 except Exception:
                     return generic_parser(date_parser, *date_cols)
 
@@ -2201,18 +2231,30 @@ def _clean_index_names(columns, index_col):
     return index_names, columns, index_col
 
 
-def _get_empty_meta(columns, index_col, index_names):
+def _get_empty_meta(columns, index_col, index_names, dtype=None):
     columns = list(columns)
 
-    if index_col is not None:
-        index = MultiIndex.from_arrays([[]] * len(index_col),
-                                       names=index_names)
-        for n in index_col:
-            columns.pop(n)
+    if dtype is None:
+        dtype = {}
     else:
-        index = Index([])
+        # Convert column indexes to column names.
+        dtype = dict((columns[k] if com.is_integer(k) else k, v)
+                     for k, v in compat.iteritems(dtype))
 
-    return index, columns, {}
+    if index_col is None or index_col is False:
+        index = Index([])
+    else:
+        index = [np.empty(0, dtype=dtype.get(index_name, np.object))
+                  for index_name in index_names]
+        index = MultiIndex.from_arrays(index, names=index_names)
+        index_col.sort()
+        for i, n in enumerate(index_col):
+            columns.pop(n-i)
+
+    col_dict = dict((col_name, np.empty(0, dtype=dtype.get(col_name, np.object)))
+                    for col_name in columns)
+
+    return index, columns, col_dict
 
 
 def _floatify_na_values(na_values):

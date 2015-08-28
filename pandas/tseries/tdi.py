@@ -1,17 +1,13 @@
 """ implement the TimedeltaIndex """
 
-import operator
-import datetime
 from datetime import timedelta
 import numpy as np
-
 from pandas.core.common import (ABCSeries, _TD_DTYPE, _INT64_DTYPE,
                                 is_timedelta64_dtype, _maybe_box,
                                 _values_from_object, isnull, is_integer, is_float)
 from pandas.core.index import Index, Int64Index
 import pandas.compat as compat
 from pandas.compat import u
-from pandas.core.base import PandasObject
 from pandas.util.decorators import cache_readonly
 from pandas.tseries.frequencies import to_offset
 import pandas.core.common as com
@@ -130,8 +126,8 @@ class TimedeltaIndex(DatetimeIndexOpsMixin, Int64Index):
 
     _engine_type = _index.TimedeltaEngine
 
-    _comparables = ['name','freq']
-    _attributes = ['name','freq']
+    _comparables = ['name', 'freq']
+    _attributes = ['name', 'freq']
     _is_numeric_dtype = True
     freq = None
 
@@ -140,7 +136,7 @@ class TimedeltaIndex(DatetimeIndexOpsMixin, Int64Index):
                 copy=False, name=None,
                 closed=None, verify_integrity=True, **kwargs):
 
-        if isinstance(data, TimedeltaIndex) and freq is None:
+        if isinstance(data, TimedeltaIndex) and freq is None and name is None:
             if copy:
                 data = data.copy()
             return data
@@ -248,7 +244,7 @@ class TimedeltaIndex(DatetimeIndexOpsMixin, Int64Index):
 
     @property
     def _box_func(self):
-        return lambda x: Timedelta(x,unit='ns')
+        return lambda x: Timedelta(x, unit='ns')
 
     @classmethod
     def _simple_new(cls, values, name=None, freq=None, **kwargs):
@@ -274,10 +270,6 @@ class TimedeltaIndex(DatetimeIndexOpsMixin, Int64Index):
         from pandas.core.format import _get_format_timedelta64
         return _get_format_timedelta64(self, box=True)
 
-    def _format_footer(self):
-        tagline = 'Length: %d, Freq: %s'
-        return tagline % (len(self), self.freqstr)
-
     def __setstate__(self, state):
         """Necessary for making this object picklable"""
         if isinstance(state, dict):
@@ -289,12 +281,15 @@ class TimedeltaIndex(DatetimeIndexOpsMixin, Int64Index):
     def _add_delta(self, delta):
         if isinstance(delta, (Tick, timedelta, np.timedelta64)):
             new_values = self._add_delta_td(delta)
+            name = self.name
         elif isinstance(delta, TimedeltaIndex):
             new_values = self._add_delta_tdi(delta)
+            # update name when delta is index
+            name = com._maybe_match_name(self, delta)
         else:
             raise ValueError("cannot add the type {0} to a TimedeltaIndex".format(type(delta)))
 
-        result = TimedeltaIndex(new_values, freq='infer')
+        result = TimedeltaIndex(new_values, freq='infer', name=name)
         return result
 
     def _evaluate_with_timedelta_like(self, other, op, opstr):
@@ -441,12 +436,12 @@ class TimedeltaIndex(DatetimeIndexOpsMixin, Int64Index):
         -------
         y : Index or TimedeltaIndex
         """
-        if _is_convertible_to_index(other):
+        self._assert_can_do_setop(other)
+        if not isinstance(other, TimedeltaIndex):
             try:
                 other = TimedeltaIndex(other)
-            except TypeError:
+            except (TypeError, ValueError):
                 pass
-
         this, other = self, other
 
         if this._can_fast_union(other):
@@ -586,6 +581,7 @@ class TimedeltaIndex(DatetimeIndexOpsMixin, Int64Index):
         -------
         y : Index or TimedeltaIndex
         """
+        self._assert_can_do_setop(other)
         if not isinstance(other, TimedeltaIndex):
             try:
                 other = TimedeltaIndex(other)
@@ -649,7 +645,7 @@ class TimedeltaIndex(DatetimeIndexOpsMixin, Int64Index):
         values = self._engine.get_value(_values_from_object(series), key)
         return _maybe_box(self, values, series, key)
 
-    def get_loc(self, key, method=None):
+    def get_loc(self, key, method=None, tolerance=None):
         """
         Get integer location for requested label
 
@@ -657,12 +653,17 @@ class TimedeltaIndex(DatetimeIndexOpsMixin, Int64Index):
         -------
         loc : int
         """
+        if tolerance is not None:
+            # try converting tolerance now, so errors don't get swallowed by
+            # the try/except clauses below
+            tolerance = self._convert_tolerance(tolerance)
+
         if _is_convertible_to_td(key):
             key = Timedelta(key)
-            return Index.get_loc(self, key, method=method)
+            return Index.get_loc(self, key, method, tolerance)
 
         try:
-            return Index.get_loc(self, key, method=method)
+            return Index.get_loc(self, key, method, tolerance)
         except (KeyError, ValueError, TypeError):
             try:
                 return self._get_string_slice(key)
@@ -671,7 +672,7 @@ class TimedeltaIndex(DatetimeIndexOpsMixin, Int64Index):
 
             try:
                 stamp = Timedelta(key)
-                return Index.get_loc(self, stamp, method=method)
+                return Index.get_loc(self, stamp, method, tolerance)
             except (KeyError, ValueError):
                 raise KeyError(key)
 
@@ -750,25 +751,6 @@ class TimedeltaIndex(DatetimeIndexOpsMixin, Int64Index):
 
         # try to find a the dates
         return (lhs_mask & rhs_mask).nonzero()[0]
-
-    def __getitem__(self, key):
-        getitem = self._data.__getitem__
-        if np.isscalar(key):
-            val = getitem(key)
-            return Timedelta(val)
-        else:
-            if com.is_bool_indexer(key):
-                key = np.asarray(key)
-                if key.all():
-                    key = slice(0,None,None)
-                else:
-                    key = lib.maybe_booleans_to_slice(key.view(np.uint8))
-
-            result = getitem(key)
-            if result.ndim > 1:
-                return result
-
-            return self._simple_new(result, self.name)
 
     def searchsorted(self, key, side='left'):
         if isinstance(key, (np.ndarray, Index)):
@@ -876,7 +858,7 @@ class TimedeltaIndex(DatetimeIndexOpsMixin, Int64Index):
                 freq = self.freq
         else:
             if com.is_list_like(loc):
-                loc = lib.maybe_indices_to_slice(com._ensure_int64(np.array(loc)))
+                loc = lib.maybe_indices_to_slice(com._ensure_int64(np.array(loc)), len(self))
             if isinstance(loc, slice) and loc.step in (1, None):
                 if (loc.start in (0, None) or loc.stop in (len(self), None)):
                     freq = self.freq
@@ -927,7 +909,8 @@ def _generate_regular_range(start, end, periods, offset):
         e = Timedelta(end).value + stride
         b = e - periods * stride
     else:
-        raise NotImplementedError
+        raise ValueError("at least 'start' or 'end' should be specified "
+                         "if a 'period' is given.")
 
     data = np.arange(b, e, stride, dtype=np.int64)
     data = TimedeltaIndex._simple_new(data, None)

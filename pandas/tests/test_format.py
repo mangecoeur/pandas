@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
+from distutils.version import LooseVersion
 import re
 
 from pandas.compat import range, zip, lrange, StringIO, PY3, lzip, u
@@ -14,7 +15,15 @@ from numpy import nan
 from numpy.random import randn
 import numpy as np
 
-from pandas import DataFrame, Series, Index, Timestamp, MultiIndex
+div_style = ''
+try:
+    import IPython
+    if IPython.__version__ < LooseVersion('3.0.0'):
+        div_style = ' style="max-width:1500px;overflow:auto;"'
+except ImportError:
+    pass
+
+from pandas import DataFrame, Series, Index, Timestamp, MultiIndex, date_range, NaT
 
 import pandas.core.format as fmt
 import pandas.util.testing as tm
@@ -298,6 +307,21 @@ class TestDataFrameFormatting(tm.TestCase):
                 com.pprint_thing(df._repr_fits_horizontal_())
                 self.assertTrue(has_expanded_repr(df))
 
+    def test_str_max_colwidth(self):
+        # GH 7856
+        df = pd.DataFrame([{'a': 'foo', 'b': 'bar',
+                            'c': 'uncomfortably long line with lots of stuff',
+                            'd': 1},
+                           {'a': 'foo', 'b': 'bar', 'c': 'stuff', 'd': 1}])
+        df.set_index(['a', 'b', 'c'])
+        self.assertTrue(str(df) == '     a    b                                           c  d\n'
+                                   '0  foo  bar  uncomfortably long line with lots of stuff  1\n'
+                                   '1  foo  bar                                       stuff  1')
+        with option_context('max_colwidth', 20):
+            self.assertTrue(str(df) == '     a    b                    c  d\n'
+                                       '0  foo  bar  uncomfortably lo...  1\n'
+                                       '1  foo  bar                stuff  1')
+
     def test_auto_detect(self):
         term_width, term_height = get_terminal_size()
         fac = 1.05  # Arbitrary large factor to exceed term widht
@@ -371,7 +395,7 @@ class TestDataFrameFormatting(tm.TestCase):
         buf.getvalue()
 
         result = self.frame.to_string()
-        tm.assert_isinstance(result, compat.text_type)
+        tm.assertIsInstance(result, compat.text_type)
 
     def test_to_string_utf8_columns(self):
         n = u("\u05d0").encode('utf-8')
@@ -606,6 +630,10 @@ class TestDataFrameFormatting(tm.TestCase):
     </tr>
   </tbody>
 </table>"""
+        self.assertEqual(result, expected)
+
+        df.index = Index(df.index.values, name='idx')
+        result = df.to_html(index=False)
         self.assertEqual(result, expected)
 
     def test_to_html_multiindex_sparsify_false_multi_sparse(self):
@@ -877,7 +905,7 @@ class TestDataFrameFormatting(tm.TestCase):
         fmt.set_option('display.max_columns',4)
         result = df._repr_html_()
         expected = '''\
-<div style="max-height:1000px;max-width:1500px;overflow:auto;">
+<div{0}>
 <table border="1" class="dataframe">
   <thead>
     <tr style="text-align: right;">
@@ -965,8 +993,8 @@ class TestDataFrameFormatting(tm.TestCase):
   </tbody>
 </table>
 <p>20 rows × 20 columns</p>
-</div>'''
-        if sys.version_info[0] < 3:
+</div>'''.format(div_style)
+        if compat.PY2:
             expected = expected.decode('utf-8')
         self.assertEqual(result, expected)
 
@@ -978,7 +1006,7 @@ class TestDataFrameFormatting(tm.TestCase):
         fmt.set_option('display.max_columns',7)
         result = df._repr_html_()
         expected = '''\
-<div style="max-height:1000px;max-width:1500px;overflow:auto;">
+<div{0}>
 <table border="1" class="dataframe">
   <thead>
     <tr>
@@ -1081,8 +1109,8 @@ class TestDataFrameFormatting(tm.TestCase):
   </tbody>
 </table>
 <p>8 rows × 8 columns</p>
-</div>'''
-        if sys.version_info[0] < 3:
+</div>'''.format(div_style)
+        if compat.PY2:
             expected = expected.decode('utf-8')
         self.assertEqual(result, expected)
 
@@ -1095,7 +1123,7 @@ class TestDataFrameFormatting(tm.TestCase):
         fmt.set_option('display.multi_sparse',False)
         result = df._repr_html_()
         expected = '''\
-<div style="max-height:1000px;max-width:1500px;overflow:auto;">
+<div{0}>
 <table border="1" class="dataframe">
   <thead>
     <tr>
@@ -1191,8 +1219,8 @@ class TestDataFrameFormatting(tm.TestCase):
   </tbody>
 </table>
 <p>8 rows × 8 columns</p>
-</div>'''
-        if sys.version_info[0] < 3:
+</div>'''.format(div_style)
+        if compat.PY2:
             expected = expected.decode('utf-8')
         self.assertEqual(result, expected)
 
@@ -1446,7 +1474,7 @@ class TestDataFrameFormatting(tm.TestCase):
         self.assertIsNone(retval)
         self.assertEqual(buf.getvalue(), s)
 
-        tm.assert_isinstance(s, compat.string_types)
+        tm.assertIsInstance(s, compat.string_types)
 
         # print in right order
         result = biggie.to_string(columns=['B', 'A'], col_space=17,
@@ -1499,7 +1527,7 @@ class TestDataFrameFormatting(tm.TestCase):
 
     def test_to_string_float_formatting(self):
         self.reset_display_options()
-        fmt.set_option('display.precision', 6, 'display.column_space',
+        fmt.set_option('display.precision', 5, 'display.column_space',
                        12, 'display.notebook_repr_html', False)
 
         df = DataFrame({'x': [0, 0.25, 3456.000, 12e+45, 1.64e+6,
@@ -1530,7 +1558,7 @@ class TestDataFrameFormatting(tm.TestCase):
         self.assertEqual(df_s, expected)
 
         self.reset_display_options()
-        self.assertEqual(get_option("display.precision"), 7)
+        self.assertEqual(get_option("display.precision"), 6)
 
         df = DataFrame({'x': [1e9, 0.2512]})
         df_s = df.to_string()
@@ -1695,7 +1723,7 @@ c  10  11  12  13  14\
         self.assertIsNone(retval)
         self.assertEqual(buf.getvalue(), s)
 
-        tm.assert_isinstance(s, compat.string_types)
+        tm.assertIsInstance(s, compat.string_types)
 
         biggie.to_html(columns=['B', 'A'], col_space=17)
         biggie.to_html(columns=['B', 'A'],
@@ -1898,15 +1926,195 @@ c  10  11  12  13  14\
                            'C': ['one', 'two', np.NaN]},
                           columns=['A', 'B', 'C'],
                           index=index)
+        expected_with_index = ('<table border="1" class="dataframe">\n'
+                               '  <thead>\n'
+                               '    <tr style="text-align: right;">\n'
+                               '      <th></th>\n'
+                               '      <th>A</th>\n'
+                               '      <th>B</th>\n'
+                               '      <th>C</th>\n'
+                               '    </tr>\n'
+                               '  </thead>\n'
+                               '  <tbody>\n'
+                               '    <tr>\n'
+                               '      <th>foo</th>\n'
+                               '      <td>1</td>\n'
+                               '      <td>1.2</td>\n'
+                               '      <td>one</td>\n'
+                               '    </tr>\n'
+                               '    <tr>\n'
+                               '      <th>bar</th>\n'
+                               '      <td>2</td>\n'
+                               '      <td>3.4</td>\n'
+                               '      <td>two</td>\n'
+                               '    </tr>\n'
+                               '    <tr>\n'
+                               '      <th>baz</th>\n'
+                               '      <td>3</td>\n'
+                               '      <td>5.6</td>\n'
+                               '      <td>NaN</td>\n'
+                               '    </tr>\n'
+                               '  </tbody>\n'
+                               '</table>')
+        self.assertEqual(df.to_html(), expected_with_index)
+
+        expected_without_index = ('<table border="1" class="dataframe">\n'
+                                  '  <thead>\n'
+                                  '    <tr style="text-align: right;">\n'
+                                  '      <th>A</th>\n'
+                                  '      <th>B</th>\n'
+                                  '      <th>C</th>\n'
+                                  '    </tr>\n'
+                                  '  </thead>\n'
+                                  '  <tbody>\n'
+                                  '    <tr>\n'
+                                  '      <td>1</td>\n'
+                                  '      <td>1.2</td>\n'
+                                  '      <td>one</td>\n'
+                                  '    </tr>\n'
+                                  '    <tr>\n'
+                                  '      <td>2</td>\n'
+                                  '      <td>3.4</td>\n'
+                                  '      <td>two</td>\n'
+                                  '    </tr>\n'
+                                  '    <tr>\n'
+                                  '      <td>3</td>\n'
+                                  '      <td>5.6</td>\n'
+                                  '      <td>NaN</td>\n'
+                                  '    </tr>\n'
+                                  '  </tbody>\n'
+                                  '</table>')
         result = df.to_html(index=False)
         for i in index:
             self.assertNotIn(i, result)
+        self.assertEqual(result, expected_without_index)
+        df.index = Index(['foo', 'bar', 'baz'], name='idx')
+        expected_with_index = ('<table border="1" class="dataframe">\n'
+                               '  <thead>\n'
+                               '    <tr style="text-align: right;">\n'
+                               '      <th></th>\n'
+                               '      <th>A</th>\n'
+                               '      <th>B</th>\n'
+                               '      <th>C</th>\n'
+                               '    </tr>\n'
+                               '    <tr>\n'
+                               '      <th>idx</th>\n'
+                               '      <th></th>\n'
+                               '      <th></th>\n'
+                               '      <th></th>\n'
+                               '    </tr>\n'
+                               '  </thead>\n'
+                               '  <tbody>\n'
+                               '    <tr>\n'
+                               '      <th>foo</th>\n'
+                               '      <td>1</td>\n'
+                               '      <td>1.2</td>\n'
+                               '      <td>one</td>\n'
+                               '    </tr>\n'
+                               '    <tr>\n'
+                               '      <th>bar</th>\n'
+                               '      <td>2</td>\n'
+                               '      <td>3.4</td>\n'
+                               '      <td>two</td>\n'
+                               '    </tr>\n'
+                               '    <tr>\n'
+                               '      <th>baz</th>\n'
+                               '      <td>3</td>\n'
+                               '      <td>5.6</td>\n'
+                               '      <td>NaN</td>\n'
+                               '    </tr>\n'
+                               '  </tbody>\n'
+                               '</table>')
+        self.assertEqual(df.to_html(), expected_with_index)
+        self.assertEqual(df.to_html(index=False), expected_without_index)
 
         tuples = [('foo', 'car'), ('foo', 'bike'), ('bar', 'car')]
         df.index = MultiIndex.from_tuples(tuples)
+
+        expected_with_index = ('<table border="1" class="dataframe">\n'
+                               '  <thead>\n'
+                               '    <tr style="text-align: right;">\n'
+                               '      <th></th>\n'
+                               '      <th></th>\n'
+                               '      <th>A</th>\n'
+                               '      <th>B</th>\n'
+                               '      <th>C</th>\n'
+                               '    </tr>\n'
+                               '  </thead>\n'
+                               '  <tbody>\n'
+                               '    <tr>\n'
+                               '      <th rowspan="2" valign="top">foo</th>\n'
+                               '      <th>car</th>\n'
+                               '      <td>1</td>\n'
+                               '      <td>1.2</td>\n'
+                               '      <td>one</td>\n'
+                               '    </tr>\n'
+                               '    <tr>\n'
+                               '      <th>bike</th>\n'
+                               '      <td>2</td>\n'
+                               '      <td>3.4</td>\n'
+                               '      <td>two</td>\n'
+                               '    </tr>\n'
+                               '    <tr>\n'
+                               '      <th>bar</th>\n'
+                               '      <th>car</th>\n'
+                               '      <td>3</td>\n'
+                               '      <td>5.6</td>\n'
+                               '      <td>NaN</td>\n'
+                               '    </tr>\n'
+                               '  </tbody>\n'
+                               '</table>')
+        self.assertEqual(df.to_html(), expected_with_index)
+
         result = df.to_html(index=False)
         for i in ['foo', 'bar', 'car', 'bike']:
             self.assertNotIn(i, result)
+        # must be the same result as normal index
+        self.assertEqual(result, expected_without_index)
+
+        df.index = MultiIndex.from_tuples(tuples, names=['idx1', 'idx2'])
+        expected_with_index = ('<table border="1" class="dataframe">\n'
+                               '  <thead>\n'
+                               '    <tr style="text-align: right;">\n'
+                               '      <th></th>\n'
+                               '      <th></th>\n'
+                               '      <th>A</th>\n'
+                               '      <th>B</th>\n'
+                               '      <th>C</th>\n'
+                               '    </tr>\n'
+                               '    <tr>\n'
+                               '      <th>idx1</th>\n'
+                               '      <th>idx2</th>\n'
+                               '      <th></th>\n'
+                               '      <th></th>\n'
+                               '      <th></th>\n'
+                               '    </tr>\n'
+                               '  </thead>\n'
+                               '  <tbody>\n'
+                               '    <tr>\n'
+                               '      <th rowspan="2" valign="top">foo</th>\n'
+                               '      <th>car</th>\n'
+                               '      <td>1</td>\n'
+                               '      <td>1.2</td>\n'
+                               '      <td>one</td>\n'
+                               '    </tr>\n'
+                               '    <tr>\n'
+                               '      <th>bike</th>\n'
+                               '      <td>2</td>\n'
+                               '      <td>3.4</td>\n'
+                               '      <td>two</td>\n'
+                               '    </tr>\n'
+                               '    <tr>\n'
+                               '      <th>bar</th>\n'
+                               '      <th>car</th>\n'
+                               '      <td>3</td>\n'
+                               '      <td>5.6</td>\n'
+                               '      <td>NaN</td>\n'
+                               '    </tr>\n'
+                               '  </tbody>\n'
+                               '</table>')
+        self.assertEqual(df.to_html(), expected_with_index)
+        self.assertEqual(df.to_html(index=False), expected_without_index)
 
     def test_repr_html(self):
         self.frame._repr_html_()
@@ -2197,6 +2405,28 @@ x & y &  a \\
 """
         self.assertEqual(result, expected)
 
+        df = DataFrame.from_dict({
+            ('c1', 0): pd.Series(dict((x, x) for x in range(4))),
+            ('c1', 1): pd.Series(dict((x, x + 4) for x in range(4))),
+            ('c2', 0): pd.Series(dict((x, x) for x in range(4))),
+            ('c2', 1): pd.Series(dict((x, x + 4) for x in range(4))),
+            ('c3', 0): pd.Series(dict((x, x) for x in range(4))),
+        }).T
+        result = df.to_latex()
+        expected = r"""\begin{tabular}{llrrrr}
+\toprule
+   &   &  0 &  1 &  2 &  3 \\
+\midrule
+c1 & 0 &  0 &  1 &  2 &  3 \\
+   & 1 &  4 &  5 &  6 &  7 \\
+c2 & 0 &  0 &  1 &  2 &  3 \\
+   & 1 &  4 &  5 &  6 &  7 \\
+c3 & 0 &  0 &  1 &  2 &  3 \\
+\bottomrule
+\end{tabular}
+"""
+        self.assertEqual(result, expected)
+
     def test_to_latex_escape(self):
         a = 'a'
         b = 'b'
@@ -2412,6 +2642,27 @@ $1$,$2$
         expected_float_format = ';col1;col2;col3\n0;1;a;10,10\n'
         self.assertEqual(df.to_csv(decimal=',',sep=';', float_format = '%.2f'), expected_float_format)
 
+    def test_to_csv_date_format(self):
+        # GH 10209
+        df_sec = DataFrame({'A': pd.date_range('20130101',periods=5,freq='s')})
+        df_day = DataFrame({'A': pd.date_range('20130101',periods=5,freq='d')})
+
+        expected_default_sec = ',A\n0,2013-01-01 00:00:00\n1,2013-01-01 00:00:01\n2,2013-01-01 00:00:02' + \
+                               '\n3,2013-01-01 00:00:03\n4,2013-01-01 00:00:04\n'
+        self.assertEqual(df_sec.to_csv(), expected_default_sec)
+
+        expected_ymdhms_day = ',A\n0,2013-01-01 00:00:00\n1,2013-01-02 00:00:00\n2,2013-01-03 00:00:00' + \
+                              '\n3,2013-01-04 00:00:00\n4,2013-01-05 00:00:00\n'
+        self.assertEqual(df_day.to_csv(date_format='%Y-%m-%d %H:%M:%S'), expected_ymdhms_day)
+
+        expected_ymd_sec = ',A\n0,2013-01-01\n1,2013-01-01\n2,2013-01-01\n3,2013-01-01\n4,2013-01-01\n'
+        self.assertEqual(df_sec.to_csv(date_format='%Y-%m-%d'), expected_ymd_sec)
+
+        expected_default_day = ',A\n0,2013-01-01\n1,2013-01-02\n2,2013-01-03\n3,2013-01-04\n4,2013-01-05\n'
+        self.assertEqual(df_day.to_csv(), expected_default_day)
+        self.assertEqual(df_day.to_csv(date_format='%Y-%m-%d'), expected_default_day)
+
+
 class TestSeriesFormatting(tm.TestCase):
     _multiprocess_can_split_ = True
 
@@ -2458,7 +2709,7 @@ class TestSeriesFormatting(tm.TestCase):
 
     def test_freq_name_separation(self):
         s = Series(np.random.randn(10),
-                   index=pd.date_range('1/1/2000', periods=10), name=0)
+                   index=date_range('1/1/2000', periods=10), name=0)
 
         result = repr(s)
         self.assertTrue('Freq: D, Name: 0' in result)
@@ -2519,7 +2770,6 @@ class TestSeriesFormatting(tm.TestCase):
 
     def test_datetimeindex(self):
 
-        from pandas import date_range, NaT
         index = date_range('20130102',periods=6)
         s = Series(1,index=index)
         result = s.to_string()
@@ -2537,7 +2787,6 @@ class TestSeriesFormatting(tm.TestCase):
 
     def test_timedelta64(self):
 
-        from pandas import date_range
         from datetime import datetime, timedelta
 
         Series(np.array([1100, 20], dtype='timedelta64[ns]')).to_string()
@@ -2986,6 +3235,36 @@ class TestFloatArrayFormatter(tm.TestCase):
         self.assertEqual(result[0], " 12")
         self.assertEqual(result[1], "  0")
 
+    def test_output_significant_digits(self):
+        # Issue #9764
+
+        # In case default display precision changes:
+        with pd.option_context('display.precision', 6):
+            # DataFrame example from issue #9764
+            d=pd.DataFrame({'col1':[9.999e-8, 1e-7, 1.0001e-7, 2e-7, 4.999e-7, 5e-7, 5.0001e-7, 6e-7, 9.999e-7, 1e-6, 1.0001e-6, 2e-6, 4.999e-6, 5e-6, 5.0001e-6, 6e-6]})
+
+            expected_output={
+                (0,6):'           col1\n0  9.999000e-08\n1  1.000000e-07\n2  1.000100e-07\n3  2.000000e-07\n4  4.999000e-07\n5  5.000000e-07',
+                (1,6):'           col1\n1  1.000000e-07\n2  1.000100e-07\n3  2.000000e-07\n4  4.999000e-07\n5  5.000000e-07',
+                (1,8):'           col1\n1  1.000000e-07\n2  1.000100e-07\n3  2.000000e-07\n4  4.999000e-07\n5  5.000000e-07\n6  5.000100e-07\n7  6.000000e-07',
+                (8,16):'            col1\n8   9.999000e-07\n9   1.000000e-06\n10  1.000100e-06\n11  2.000000e-06\n12  4.999000e-06\n13  5.000000e-06\n14  5.000100e-06\n15  6.000000e-06',
+                (9,16):'        col1\n9   0.000001\n10  0.000001\n11  0.000002\n12  0.000005\n13  0.000005\n14  0.000005\n15  0.000006'
+            }
+
+            for (start, stop), v in expected_output.items():
+                self.assertEqual(str(d[start:stop]), v)
+
+    def test_too_long(self):
+        # GH 10451
+        with pd.option_context('display.precision', 4):
+            # need both a number > 1e8 and something that normally formats to having length > display.precision + 6
+            df = pd.DataFrame(dict(x=[12345.6789]))
+            self.assertEqual(str(df), '            x\n0  12345.6789')
+            df = pd.DataFrame(dict(x=[2e8]))
+            self.assertEqual(str(df), '           x\n0  200000000')
+            df = pd.DataFrame(dict(x=[12345.6789, 2e8]))
+            self.assertEqual(str(df), '            x\n0  1.2346e+04\n1  2.0000e+08')
+
 
 class TestRepr_timedelta64(tm.TestCase):
 
@@ -3123,6 +3402,44 @@ class TestDatetime64Formatter(tm.TestCase):
         result = fmt.Datetime64Formatter(x).get_result()
         self.assertEqual(result[0].strip(), "1970-01-01 00:00:00.000000200")
 
+    def test_dates_display(self):
+
+        # 10170
+        # make sure that we are consistently display date formatting
+        x = Series(date_range('20130101 09:00:00',periods=5,freq='D'))
+        x.iloc[1] = np.nan
+        result = fmt.Datetime64Formatter(x).get_result()
+        self.assertEqual(result[0].strip(), "2013-01-01 09:00:00")
+        self.assertEqual(result[1].strip(), "NaT")
+        self.assertEqual(result[4].strip(), "2013-01-05 09:00:00")
+
+        x = Series(date_range('20130101 09:00:00',periods=5,freq='s'))
+        x.iloc[1] = np.nan
+        result = fmt.Datetime64Formatter(x).get_result()
+        self.assertEqual(result[0].strip(), "2013-01-01 09:00:00")
+        self.assertEqual(result[1].strip(), "NaT")
+        self.assertEqual(result[4].strip(), "2013-01-01 09:00:04")
+
+        x = Series(date_range('20130101 09:00:00',periods=5,freq='ms'))
+        x.iloc[1] = np.nan
+        result = fmt.Datetime64Formatter(x).get_result()
+        self.assertEqual(result[0].strip(), "2013-01-01 09:00:00.000")
+        self.assertEqual(result[1].strip(), "NaT")
+        self.assertEqual(result[4].strip(), "2013-01-01 09:00:00.004")
+
+        x = Series(date_range('20130101 09:00:00',periods=5,freq='us'))
+        x.iloc[1] = np.nan
+        result = fmt.Datetime64Formatter(x).get_result()
+        self.assertEqual(result[0].strip(), "2013-01-01 09:00:00.000000")
+        self.assertEqual(result[1].strip(), "NaT")
+        self.assertEqual(result[4].strip(), "2013-01-01 09:00:00.000004")
+
+        x = Series(date_range('20130101 09:00:00',periods=5,freq='N'))
+        x.iloc[1] = np.nan
+        result = fmt.Datetime64Formatter(x).get_result()
+        self.assertEqual(result[0].strip(), "2013-01-01 09:00:00.000000000")
+        self.assertEqual(result[1].strip(), "NaT")
+        self.assertEqual(result[4].strip(), "2013-01-01 09:00:00.000000004")
 
 class TestNaTFormatting(tm.TestCase):
     def test_repr(self):
@@ -3159,13 +3476,13 @@ class TestDatetimeIndexFormat(tm.TestCase):
 class TestDatetimeIndexUnicode(tm.TestCase):
     def test_dates(self):
         text = str(pd.to_datetime([datetime(2013,1,1), datetime(2014,1,1)]))
-        self.assertTrue("[2013-01-01," in text)
-        self.assertTrue(", 2014-01-01]" in text)
+        self.assertTrue("['2013-01-01'," in text)
+        self.assertTrue(", '2014-01-01']" in text)
 
     def test_mixed(self):
         text = str(pd.to_datetime([datetime(2013,1,1), datetime(2014,1,1,12), datetime(2014,1,1)]))
-        self.assertTrue("[2013-01-01 00:00:00," in text)
-        self.assertTrue(", 2014-01-01 00:00:00]" in text)
+        self.assertTrue("'2013-01-01 00:00:00'," in text)
+        self.assertTrue("'2014-01-01 00:00:00']" in text)
 
 
 class TestStringRepTimestamp(tm.TestCase):

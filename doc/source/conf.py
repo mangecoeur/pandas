@@ -52,7 +52,7 @@ extensions = ['sphinx.ext.autodoc',
 
 
 with open("index.rst") as f:
-    lines = f.readlines()
+    index_rst_lines = f.readlines()
 
 # only include the slow autosummary feature if we're building the API section
 # of the docs
@@ -60,20 +60,21 @@ with open("index.rst") as f:
 # JP: added from sphinxdocs
 autosummary_generate = False
 
-if any([re.match("\s*api\s*",l) for l in lines]):
+if any([re.match("\s*api\s*",l) for l in index_rst_lines]):
     autosummary_generate = True
 
-ds = []
+files_to_delete = []
 for f in os.listdir(os.path.dirname(__file__)):
-    if (not f.endswith(('.rst'))) or (f.startswith('.')) or os.path.basename(f) == 'index.rst':
+    if not f.endswith('.rst') or f.startswith('.') or os.path.basename(f) == 'index.rst':
         continue
 
-    _f = f.split('.rst')[0]
-    if not any([re.match("\s*%s\s*$" % _f,l) for l in lines]):
-        ds.append(f)
+    _file_basename = f.split('.rst')[0]
+    _regex_to_match = "\s*{}\s*$".format(_file_basename)
+    if not any([re.match(_regex_to_match, line) for line in index_rst_lines]):
+        files_to_delete.append(f)
 
-if ds:
-    print("I'm about to DELETE the following:\n%s\n" % list(sorted(ds)))
+if files_to_delete:
+    print("I'm about to DELETE the following:\n%s\n" % list(sorted(files_to_delete)))
     sys.stdout.write("WARNING: I'd like to delete those to speed up processing (yes/no)? ")
     if PY3:
         answer = input()
@@ -81,7 +82,7 @@ if ds:
         answer = raw_input()
 
     if answer.lower().strip() in ('y','yes'):
-        for f in ds:
+        for f in files_to_delete:
             f = os.path.join(os.path.join(os.path.dirname(__file__),f))
             f= os.path.abspath(f)
             try:
@@ -211,7 +212,30 @@ html_static_path = ['_static']
 
 # Additional templates that should be rendered to pages, maps page names to
 # template names.
-# html_additional_pages = {}
+
+# Add redirect for previously existing API pages (which are now included in
+# the API pages as top-level functions) based on a template (GH9911) 
+moved_api_pages = [
+    'pandas.core.common.isnull', 'pandas.core.common.notnull', 'pandas.core.reshape.get_dummies',
+    'pandas.tools.merge.concat', 'pandas.tools.merge.merge', 'pandas.tools.pivot.pivot_table',
+    'pandas.tseries.tools.to_datetime', 'pandas.io.clipboard.read_clipboard', 'pandas.io.excel.ExcelFile.parse',
+    'pandas.io.excel.read_excel', 'pandas.io.html.read_html', 'pandas.io.json.read_json',
+    'pandas.io.parsers.read_csv', 'pandas.io.parsers.read_fwf', 'pandas.io.parsers.read_table',
+    'pandas.io.pickle.read_pickle', 'pandas.io.pytables.HDFStore.append', 'pandas.io.pytables.HDFStore.get',
+    'pandas.io.pytables.HDFStore.put', 'pandas.io.pytables.HDFStore.select', 'pandas.io.pytables.read_hdf',
+    'pandas.io.sql.read_sql', 'pandas.io.sql.read_frame', 'pandas.io.sql.write_frame',
+    'pandas.io.stata.read_stata', 'pandas.stats.moments.ewma', 'pandas.stats.moments.ewmcorr',
+    'pandas.stats.moments.ewmcov', 'pandas.stats.moments.ewmstd', 'pandas.stats.moments.ewmvar',
+    'pandas.stats.moments.expanding_apply', 'pandas.stats.moments.expanding_corr', 'pandas.stats.moments.expanding_count',
+    'pandas.stats.moments.expanding_cov', 'pandas.stats.moments.expanding_kurt', 'pandas.stats.moments.expanding_mean',
+    'pandas.stats.moments.expanding_median', 'pandas.stats.moments.expanding_quantile', 'pandas.stats.moments.expanding_skew',
+    'pandas.stats.moments.expanding_std', 'pandas.stats.moments.expanding_sum', 'pandas.stats.moments.expanding_var',
+    'pandas.stats.moments.rolling_apply', 'pandas.stats.moments.rolling_corr', 'pandas.stats.moments.rolling_count',
+    'pandas.stats.moments.rolling_cov', 'pandas.stats.moments.rolling_kurt', 'pandas.stats.moments.rolling_mean',
+    'pandas.stats.moments.rolling_median', 'pandas.stats.moments.rolling_quantile', 'pandas.stats.moments.rolling_skew',
+    'pandas.stats.moments.rolling_std', 'pandas.stats.moments.rolling_sum', 'pandas.stats.moments.rolling_var']
+
+html_additional_pages = {'generated/' + page: 'api_redirect.html' for page in moved_api_pages}
 
 # If false, no module index is generated.
 html_use_modindex = True

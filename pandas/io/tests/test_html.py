@@ -137,12 +137,10 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
         assert_framelist_equal(df1, df2)
 
     def test_spam_no_types(self):
-        with tm.assert_produces_warning(FutureWarning):
-            df1 = self.read_html(self.spam_data, '.*Water.*',
-                                 infer_types=False)
-        with tm.assert_produces_warning(FutureWarning):
-            df2 = self.read_html(self.spam_data, 'Unit', infer_types=False)
 
+        # infer_types removed in #10892
+        df1 = self.read_html(self.spam_data, '.*Water.*')
+        df2 = self.read_html(self.spam_data, 'Unit')
         assert_framelist_equal(df1, df2)
 
         self.assertEqual(df1[0].ix[0, 0], 'Proximates')
@@ -159,12 +157,12 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
     def test_spam_no_match(self):
         dfs = self.read_html(self.spam_data)
         for df in dfs:
-            tm.assert_isinstance(df, DataFrame)
+            tm.assertIsInstance(df, DataFrame)
 
     def test_banklist_no_match(self):
         dfs = self.read_html(self.banklist_data, attrs={'id': 'table'})
         for df in dfs:
-            tm.assert_isinstance(df, DataFrame)
+            tm.assertIsInstance(df, DataFrame)
 
     def test_spam_header(self):
         df = self.read_html(self.spam_data, '.*Water.*', header=1)[0]
@@ -230,12 +228,9 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
         assert_framelist_equal(df1, df2)
 
     def test_header_and_index_no_types(self):
-        with tm.assert_produces_warning(FutureWarning):
-            df1 = self.read_html(self.spam_data, '.*Water.*', header=1,
-                                 index_col=0, infer_types=False)
-        with tm.assert_produces_warning(FutureWarning):
-            df2 = self.read_html(self.spam_data, 'Unit', header=1, index_col=0,
-                                 infer_types=False)
+        df1 = self.read_html(self.spam_data, '.*Water.*', header=1,
+                             index_col=0)
+        df2 = self.read_html(self.spam_data, 'Unit', header=1, index_col=0)
         assert_framelist_equal(df1, df2)
 
     def test_header_and_index_with_types(self):
@@ -245,18 +240,10 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
         assert_framelist_equal(df1, df2)
 
     def test_infer_types(self):
-        with tm.assert_produces_warning(FutureWarning):
-            df1 = self.read_html(self.spam_data, '.*Water.*', index_col=0,
-                                 infer_types=False)
-        with tm.assert_produces_warning(FutureWarning):
-            df2 = self.read_html(self.spam_data, 'Unit', index_col=0,
-                                 infer_types=False)
-        assert_framelist_equal(df1, df2)
 
-        with tm.assert_produces_warning(FutureWarning):
-            df2 = self.read_html(self.spam_data, 'Unit', index_col=0,
-                                 infer_types=True)
-
+        # 10892 infer_types removed
+        df1 = self.read_html(self.spam_data, '.*Water.*', index_col=0)
+        df2 = self.read_html(self.spam_data, 'Unit', index_col=0)
         assert_framelist_equal(df1, df2)
 
     def test_string_io(self):
@@ -307,9 +294,9 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
         url = self.banklist_data
         dfs = self.read_html(file_path_to_url(url), 'First',
                              attrs={'id': 'table'})
-        tm.assert_isinstance(dfs, list)
+        tm.assertIsInstance(dfs, list)
         for df in dfs:
-            tm.assert_isinstance(df, DataFrame)
+            tm.assertIsInstance(df, DataFrame)
 
     @slow
     def test_invalid_table_attrs(self):
@@ -325,34 +312,34 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
     @slow
     def test_multiindex_header(self):
         df = self._bank_data(header=[0, 1])[0]
-        tm.assert_isinstance(df.columns, MultiIndex)
+        tm.assertIsInstance(df.columns, MultiIndex)
 
     @slow
     def test_multiindex_index(self):
         df = self._bank_data(index_col=[0, 1])[0]
-        tm.assert_isinstance(df.index, MultiIndex)
+        tm.assertIsInstance(df.index, MultiIndex)
 
     @slow
     def test_multiindex_header_index(self):
         df = self._bank_data(header=[0, 1], index_col=[0, 1])[0]
-        tm.assert_isinstance(df.columns, MultiIndex)
-        tm.assert_isinstance(df.index, MultiIndex)
+        tm.assertIsInstance(df.columns, MultiIndex)
+        tm.assertIsInstance(df.index, MultiIndex)
 
     @slow
     def test_multiindex_header_skiprows_tuples(self):
         df = self._bank_data(header=[0, 1], skiprows=1, tupleize_cols=True)[0]
-        tm.assert_isinstance(df.columns, Index)
+        tm.assertIsInstance(df.columns, Index)
 
     @slow
     def test_multiindex_header_skiprows(self):
         df = self._bank_data(header=[0, 1], skiprows=1)[0]
-        tm.assert_isinstance(df.columns, MultiIndex)
+        tm.assertIsInstance(df.columns, MultiIndex)
 
     @slow
     def test_multiindex_header_index_skiprows(self):
         df = self._bank_data(header=[0, 1], index_col=[0, 1], skiprows=1)[0]
-        tm.assert_isinstance(df.index, MultiIndex)
-        tm.assert_isinstance(df.columns, MultiIndex)
+        tm.assertIsInstance(df.index, MultiIndex)
+        tm.assertIsInstance(df.columns, MultiIndex)
 
     @slow
     def test_regex_idempotency(self):
@@ -360,9 +347,9 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
         dfs = self.read_html(file_path_to_url(url),
                              match=re.compile(re.compile('Florida')),
                              attrs={'id': 'table'})
-        tm.assert_isinstance(dfs, list)
+        tm.assertIsInstance(dfs, list)
         for df in dfs:
-            tm.assert_isinstance(df, DataFrame)
+            tm.assertIsInstance(df, DataFrame)
 
     def test_negative_skiprows(self):
         with tm.assertRaisesRegexp(ValueError,
@@ -371,12 +358,16 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
 
     @network
     def test_multiple_matches(self):
+        raise nose.SkipTest("pythonxy link seems to have changed")
+
         url = 'http://code.google.com/p/pythonxy/wiki/StandardPlugins'
         dfs = self.read_html(url, match='Python', attrs={'class': 'wikitable'})
         self.assertTrue(len(dfs) > 1)
 
     @network
     def test_pythonxy_plugins_table(self):
+        raise nose.SkipTest("pythonxy link seems to have changed")
+
         url = 'http://code.google.com/p/pythonxy/wiki/StandardPlugins'
         dfs = self.read_html(url, match='Python', attrs={'class': 'wikitable'})
         zz = [df.iloc[0, 0] for df in dfs]
@@ -426,10 +417,10 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
         res1 = self.read_html(StringIO(data1))
         res2 = self.read_html(StringIO(data2))
         assert_framelist_equal(res1, res2)
-    
+
     def test_tfoot_read(self):
         """
-        Make sure that read_html reads tfoot, containing td or th. 
+        Make sure that read_html reads tfoot, containing td or th.
         Ignores empty tfoot
         """
         data_template = '''<table>
@@ -452,10 +443,10 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
 
         data1 = data_template.format(footer = "")
         data2 = data_template.format(footer ="<tr><td>footA</td><th>footB</th></tr>")
-    
+
         d1 = {'A': ['bodyA'], 'B': ['bodyB']}
         d2 = {'A': ['bodyA', 'footA'], 'B': ['bodyB', 'footB']}
-    
+
         tm.assert_frame_equal(self.read_html(data1)[0], DataFrame(d1))
         tm.assert_frame_equal(self.read_html(data2)[0], DataFrame(d2))
 
@@ -540,9 +531,11 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
                'Hamilton Bank, NA', 'The Citizens Savings Bank']
         dfnew = df.applymap(try_remove_ws).replace(old, new)
         gtnew = ground_truth.applymap(try_remove_ws)
-        converted = dfnew.convert_objects(convert_numeric=True)
-        tm.assert_frame_equal(converted.convert_objects(convert_dates='coerce'),
-                              gtnew)
+        converted = dfnew.convert_objects(datetime=True, numeric=True)
+        date_cols = ['Closing Date','Updated Date']
+        converted[date_cols] = converted[date_cols].convert_objects(datetime=True,
+                                                                    coerce=True)
+        tm.assert_frame_equal(converted,gtnew)
 
     @slow
     def test_gold_canyon(self):
@@ -639,8 +632,7 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
         with tm.assertRaisesRegexp(CParserError, r"Passed header=\[0,1\] are "
                                    "too many rows for this multi_index "
                                    "of columns"):
-            with tm.assert_produces_warning(FutureWarning):
-                self.read_html(data, infer_types=False, header=[0, 1])
+            self.read_html(data, header=[0, 1])
 
     def test_wikipedia_states_table(self):
         data = os.path.join(DATA_PATH, 'wikipedia_states.html')
@@ -721,8 +713,8 @@ class TestReadHtmlLxml(tm.TestCase, ReadHtmlMixin):
     def test_works_on_valid_markup(self):
         filename = os.path.join(DATA_PATH, 'valid_markup.html')
         dfs = self.read_html(filename, index_col=0)
-        tm.assert_isinstance(dfs, list)
-        tm.assert_isinstance(dfs[0], DataFrame)
+        tm.assertIsInstance(dfs, list)
+        tm.assertIsInstance(dfs[0], DataFrame)
 
     @slow
     def test_fallback_success(self):
@@ -749,8 +741,7 @@ class TestReadHtmlLxml(tm.TestCase, ReadHtmlMixin):
 
     def test_computer_sales_page(self):
         data = os.path.join(DATA_PATH, 'computer_sales_page.html')
-        with tm.assert_produces_warning(FutureWarning):
-            self.read_html(data, infer_types=False, header=[0, 1])
+        self.read_html(data, header=[0, 1])
 
 
 def test_invalid_flavor():

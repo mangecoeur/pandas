@@ -14,7 +14,6 @@ from pandas.io.data import DataReader, SymbolWarning, RemoteDataError, _yahoo_co
 from pandas.util.testing import (assert_series_equal, assert_produces_warning,
                                  network, assert_frame_equal)
 import pandas.util.testing as tm
-from numpy.testing import assert_array_equal
 
 if compat.PY3:
     from urllib.error import HTTPError
@@ -33,7 +32,7 @@ def assert_n_failed_equals_n_null_columns(wngs, obj, cls=SymbolWarning):
     all_nan_cols = pd.Series(dict((k, pd.isnull(v).all()) for k, v in
                                   compat.iteritems(obj)))
     n_all_nan_cols = all_nan_cols.sum()
-    valid_warnings = pd.Series([wng for wng in wngs if isinstance(wng, cls)])
+    valid_warnings = pd.Series([wng for wng in wngs if wng.category == cls])
     assert_equal(len(valid_warnings), n_all_nan_cols)
     failed_symbols = all_nan_cols[all_nan_cols].index
     msgs = valid_warnings.map(lambda x: x.message)
@@ -79,7 +78,7 @@ class TestGoogle(tm.TestCase):
         for locale in self.locales:
             with tm.set_locale(locale):
                 df = web.get_data_google('GOOG').sort_index()
-            self.assertEqual(df.Volume.ix['OCT-08-2010'], 2863473)
+            self.assertEqual(df.Volume.ix['JAN-02-2015'], 1446662)
 
     @network
     def test_get_multi1(self):
@@ -87,10 +86,10 @@ class TestGoogle(tm.TestCase):
             sl = ['AAPL', 'AMZN', 'GOOG']
             with tm.set_locale(locale):
                 pan = web.get_data_google(sl, '2012')
-            ts = pan.Close.GOOG.index[pan.Close.AAPL > pan.Close.GOOG]
+            ts = pan.Close.GOOG.index[pan.Close.AAPL < pan.Close.GOOG]
             if (hasattr(pan, 'Close') and hasattr(pan.Close, 'GOOG') and
                 hasattr(pan.Close, 'AAPL')):
-                self.assertEqual(ts[0].dayofyear, 96)
+                self.assertEqual(ts[0].dayofyear, 3)
             else:
                 self.assertRaises(AttributeError, lambda: pan.Close)
 
@@ -99,6 +98,11 @@ class TestGoogle(tm.TestCase):
         sl = ['AAPL', 'AMZN', 'INVALID']
         pan = web.get_data_google(sl, '2012')
         self.assertIn('INVALID', pan.minor_axis)
+
+    @network
+    def test_get_multi_all_invalid(self):
+        sl = ['INVALID', 'INVALID2', 'INVALID3']
+        self.assertRaises(RemoteDataError, web.get_data_google, sl, '2012')
 
     @network
     def test_get_multi2(self):
@@ -131,7 +135,7 @@ class TestGoogle(tm.TestCase):
     def test_unicode_date(self):
         #GH8967
         data = web.get_data_google('F', start='JAN-01-10', end='JAN-27-13')
-        self.assertEquals(data.index.name, 'Date')
+        self.assertEqual(data.index.name, 'Date')
 
 
 class TestYahoo(tm.TestCase):
@@ -287,16 +291,15 @@ class TestYahooOptions(tm.TestCase):
 
         # aapl has monthlies
         cls.aapl = web.Options('aapl', 'yahoo')
-        today = datetime.today()
-        cls.year = today.year
-        cls.month = today.month + 1
-        if cls.month > 12:
-            cls.year = cls.year + 1
-            cls.month = 1
-        cls.expiry = datetime(cls.year, cls.month, 1)
+        d = (Timestamp.today() + pd.offsets.MonthBegin(1)).normalize()
+        cls.year = d.year
+        cls.month = d.month
+        cls.expiry = d
+        cls.expiry2 = d + pd.offsets.MonthBegin(1)
         cls.dirpath = tm.get_data_path()
         cls.html1 = os.path.join(cls.dirpath, 'yahoo_options1.html')
         cls.html2 = os.path.join(cls.dirpath, 'yahoo_options2.html')
+        cls.html3 = os.path.join(cls.dirpath, 'yahoo_options3.html') #Empty table GH#22
         cls.data1 = cls.aapl._option_frames_from_url(cls.html1)['puts']
 
     @classmethod
@@ -320,7 +323,7 @@ class TestYahooOptions(tm.TestCase):
     def test_get_near_stock_price(self):
         try:
             options = self.aapl.get_near_stock_price(call=True, put=True,
-                                                     expiry=self.expiry)
+                                                     expiry=[self.expiry,self.expiry2])
         except RemoteDataError as e:
             raise nose.SkipTest(e)
         self.assertTrue(len(options) > 1)
@@ -428,6 +431,12 @@ class TestYahooOptions(tm.TestCase):
 
         self.assertTrue(len(data) > 1)
 
+    @network
+    def test_empty_table(self):
+        #GH22
+        empty = self.aapl._option_frames_from_url(self.html3)['puts']
+        self.assertTrue(len(empty) == 0)
+
 
 class TestOptionsWarnings(tm.TestCase):
     @classmethod
@@ -485,10 +494,7 @@ class TestFred(tm.TestCase):
         end = datetime(2013, 1, 27)
 
         received = web.DataReader("GDP", "fred", start, end)['GDP'].tail(1)[0]
-
-        # < 7/30/14 16535 was returned
-        #self.assertEqual(int(received), 16535)
-        self.assertEqual(int(received), 16502)
+        self.assertTrue(int(received) > 10000)
 
         self.assertRaises(Exception, web.DataReader, "NON EXISTENT SERIES",
                           'fred', start, end)
@@ -521,7 +527,7 @@ class TestFred(tm.TestCase):
                     [848.3],
                     [933.3]]
         result = web.get_data_fred("A09024USA144NNBR", start="1915").ix[:5]
-        assert_array_equal(result.values, np.array(expected))
+        tm.assert_numpy_array_equal(result.values, np.array(expected))
 
     @network
     def test_invalid_series(self):

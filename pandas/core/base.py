@@ -1,16 +1,14 @@
 """
 Base and utility classes for pandas objects.
 """
-import datetime
-
 from pandas import compat
 import numpy as np
 from pandas.core import common as com
 import pandas.core.nanops as nanops
-import pandas.tslib as tslib
 import pandas.lib as lib
-from pandas.util.decorators import Appender, cache_readonly
-
+from pandas.util.decorators import Appender, cache_readonly, deprecate_kwarg
+from pandas.core.strings import StringMethods
+from pandas.core.common import AbstractMethodError
 
 _shared_docs = dict()
 _indexops_doc_kwargs = dict(klass='IndexOpsMixin', inplace='',
@@ -31,7 +29,7 @@ class StringMixin(object):
     # Formatting
 
     def __unicode__(self):
-        raise NotImplementedError
+        raise AbstractMethodError(self)
 
     def __str__(self):
         """
@@ -85,16 +83,22 @@ class PandasObject(StringMixin):
         # Should be overwritten by base classes
         return object.__repr__(self)
 
-    def _local_dir(self):
-        """ provide addtional __dir__ for this object """
-        return []
+    def _dir_additions(self):
+        """ add addtional __dir__ for this object """
+        return set()
+
+    def _dir_deletions(self):
+        """ delete unwanted __dir__ for this object """
+        return set()
 
     def __dir__(self):
         """
         Provide method name lookup and completion
         Only provide 'public' methods
         """
-        return list(sorted(list(set(dir(type(self)) + self._local_dir()))))
+        rv = set(dir(type(self)))
+        rv = (rv - self._dir_deletions()) | self._dir_additions()
+        return sorted(rv)
 
     def _reset_cache(self, key=None):
         """
@@ -120,7 +124,7 @@ class PandasDelegate(PandasObject):
         raise TypeError("You cannot call method {name}".format(name=name))
 
     @classmethod
-    def _add_delegate_accessors(cls, delegate, accessors, typ):
+    def _add_delegate_accessors(cls, delegate, accessors, typ, overwrite=False):
         """
         add accessors to cls from the delegate class
 
@@ -130,6 +134,8 @@ class PandasDelegate(PandasObject):
         delegate : the class to get methods/properties & doc-strings
         acccessors : string list of accessors to add
         typ : 'property' or 'method'
+        overwrite : boolean, default False
+           overwrite the method/property in the target class if it exists
 
         """
 
@@ -163,7 +169,7 @@ class PandasDelegate(PandasObject):
                 f = _create_delegator_method(name)
 
             # don't overwrite existing methods/properties
-            if not hasattr(cls, name):
+            if overwrite or not hasattr(cls, name):
                 setattr(cls,name,f)
 
 
@@ -425,10 +431,10 @@ class IndexOpsMixin(object):
 
         if isinstance(self, PeriodIndex):
             # preserve freq
-            result.index = self._simple_new(result.index.values, self.name,
+            result.index = self._simple_new(result.index.values,
                                             freq=self.freq)
         elif isinstance(self, DatetimeIndex):
-            result.index = self._simple_new(result.index.values, self.name,
+            result.index = self._simple_new(result.index.values,
                                             tz=getattr(self, 'tz', None))
         return result
 
@@ -497,13 +503,52 @@ class IndexOpsMixin(object):
         #### needs tests/doc-string
         return self.values.searchsorted(key, side=side)
 
+    # string methods
+    def _make_str_accessor(self):
+        from pandas.core.series import Series
+        from pandas.core.index import Index
+        if isinstance(self, Series) and not com.is_object_dtype(self.dtype):
+            # this really should exclude all series with any non-string values,
+            # but that isn't practical for performance reasons until we have a
+            # str dtype (GH 9343)
+            raise AttributeError("Can only use .str accessor with string "
+                                 "values, which use np.object_ dtype in "
+                                 "pandas")
+        elif isinstance(self, Index):
+            # see scc/inferrence.pyx which can contain string values
+            allowed_types = ('string', 'unicode', 'mixed', 'mixed-integer')
+            if self.inferred_type not in allowed_types:
+                message = ("Can only use .str accessor with string values "
+                           "(i.e. inferred_type is 'string', 'unicode' or 'mixed')")
+                raise AttributeError(message)
+            if self.nlevels > 1:
+                message = "Can only use .str accessor with Index, not MultiIndex"
+                raise AttributeError(message)
+        return StringMethods(self)
+
+    str = AccessorProperty(StringMethods, _make_str_accessor)
+
+    def _dir_additions(self):
+        return set()
+
+    def _dir_deletions(self):
+        try:
+            getattr(self, 'str')
+        except AttributeError:
+            return set(['str'])
+        return set()
+
     _shared_docs['drop_duplicates'] = (
         """Return %(klass)s with duplicate values removed
 
         Parameters
         ----------
-        take_last : boolean, default False
-            Take the last observed index in a group. Default first
+
+        keep : {'first', 'last', False}, default 'first'
+            - ``first`` : Drop duplicates except for the first occurrence.
+            - ``last`` : Drop duplicates except for the last occurrence.
+            - False : Drop all duplicates.
+        take_last : deprecated
         %(inplace)s
 
         Returns
@@ -511,9 +556,10 @@ class IndexOpsMixin(object):
         deduplicated : %(klass)s
         """)
 
+    @deprecate_kwarg('take_last', 'keep', mapping={True: 'last', False: 'first'})
     @Appender(_shared_docs['drop_duplicates'] % _indexops_doc_kwargs)
-    def drop_duplicates(self, take_last=False, inplace=False):
-        duplicated = self.duplicated(take_last=take_last)
+    def drop_duplicates(self, keep='first', inplace=False):
+        duplicated = self.duplicated(keep=keep)
         result = self[np.logical_not(duplicated)]
         if inplace:
             return self._update_inplace(result)
@@ -525,18 +571,22 @@ class IndexOpsMixin(object):
 
         Parameters
         ----------
-        take_last : boolean, default False
-            Take the last observed index in a group. Default first
+        keep : {'first', 'last', False}, default 'first'
+            - ``first`` : Mark duplicates as ``True`` except for the first occurrence.
+            - ``last`` : Mark duplicates as ``True`` except for the last occurrence.
+            - False : Mark all duplicates as ``True``.
+        take_last : deprecated
 
         Returns
         -------
         duplicated : %(duplicated)s
         """)
 
+    @deprecate_kwarg('take_last', 'keep', mapping={True: 'last', False: 'first'})
     @Appender(_shared_docs['duplicated'] % _indexops_doc_kwargs)
-    def duplicated(self, take_last=False):
+    def duplicated(self, keep='first'):
         keys = com._ensure_object(self.values)
-        duplicated = lib.duplicated(keys, take_last=take_last)
+        duplicated = lib.duplicated(keys, keep=keep)
         try:
             return self._constructor(duplicated,
                                      index=self.index).__finalize__(self)
@@ -547,4 +597,4 @@ class IndexOpsMixin(object):
     # abstracts
 
     def _update_inplace(self, result, **kwargs):
-        raise NotImplementedError
+        raise AbstractMethodError(self)
