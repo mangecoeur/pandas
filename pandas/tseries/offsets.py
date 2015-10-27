@@ -261,16 +261,12 @@ class DateOffset(object):
         # relativedelta/_offset path only valid for base DateOffset
         if (self._use_relativedelta and
             set(self.kwds).issubset(relativedelta_fast)):
+
             months = ((self.kwds.get('years', 0) * 12
                         + self.kwds.get('months', 0)) * self.n)
             if months:
-                base = (i.to_period('M') + months).to_timestamp()
-                time = i.to_perioddelta('D')
-                days = i.to_perioddelta('M') - time
-                # minimum prevents month-end from wrapping
-                day_offset = np.minimum(days,
-                                        to_timedelta(base.days_in_month - 1, unit='D'))
-                i = base + day_offset + time
+                shifted = tslib.shift_months(i.asi8, months)
+                i = i._shallow_copy(shifted)
 
             weeks = (self.kwds.get('weeks', 0)) * self.n
             if weeks:
@@ -444,7 +440,10 @@ class DateOffset(object):
         """Offsets index to beginning of Period frequency"""
 
         off = i.to_perioddelta('D')
-        base_period = i.to_period(freq)
+
+        from pandas.tseries.frequencies import get_freq_code
+        base, mult = get_freq_code(freq)
+        base_period = i.to_period(base)
         if self.n < 0:
             # when subtracting, dates on start roll to prior
             roll = np.where(base_period.to_timestamp() == i - off,
@@ -459,7 +458,11 @@ class DateOffset(object):
         """Offsets index to end of Period frequency"""
 
         off = i.to_perioddelta('D')
-        base_period = i.to_period(freq)
+
+        import pandas.tseries.frequencies as frequencies
+        from pandas.tseries.frequencies import get_freq_code
+        base, mult = get_freq_code(freq)
+        base_period = i.to_period(base)
         if self.n > 0:
             # when adding, dtates on end roll to next
             roll = np.where(base_period.to_timestamp(how='end') == i - off,
@@ -1074,7 +1077,9 @@ class MonthEnd(MonthOffset):
 
     @apply_index_wraps
     def apply_index(self, i):
-        return self._end_apply_index(i, 'M')
+        months = self.n - 1 if self.n >= 0 else self.n
+        shifted = tslib.shift_months(i.asi8, months, 'end')
+        return i._shallow_copy(shifted)
 
     def onOffset(self, dt):
         if self.normalize and not _is_normalized(dt):
@@ -1099,7 +1104,9 @@ class MonthBegin(MonthOffset):
 
     @apply_index_wraps
     def apply_index(self, i):
-        return self._beg_apply_index(i, 'M')
+        months = self.n + 1 if self.n < 0 else self.n
+        shifted = tslib.shift_months(i.asi8, months, 'start')
+        return i._shallow_copy(shifted)
 
     def onOffset(self, dt):
         if self.normalize and not _is_normalized(dt):
@@ -2608,15 +2615,24 @@ def generate_range(start=None, end=None, periods=None,
         start = end - (periods - 1) * offset
 
     cur = start
+    if offset.n >= 0:
+        while cur <= end:
+            yield cur
 
-    while cur <= end:
-        yield cur
+            # faster than cur + offset
+            next_date = offset.apply(cur)
+            if next_date <= cur:
+                raise ValueError('Offset %s did not increment date' % offset)
+            cur = next_date
+    else:
+        while cur >= end:
+            yield cur
 
-        # faster than cur + offset
-        next_date = offset.apply(cur)
-        if next_date <= cur:
-            raise ValueError('Offset %s did not increment date' % offset)
-        cur = next_date
+            # faster than cur + offset
+            next_date = offset.apply(cur)
+            if next_date >= cur:
+                raise ValueError('Offset %s did not decrement date' % offset)
+            cur = next_date
 
 prefix_mapping = dict((offset._prefix, offset) for offset in [
     YearBegin,                # 'AS'
@@ -2650,14 +2666,13 @@ prefix_mapping = dict((offset._prefix, offset) for offset in [
 
 prefix_mapping['N'] = Nano
 
-
 def _make_offset(key):
     """Gets offset based on key. KeyError if prefix is bad, ValueError if
     suffix is bad. All handled by `get_offset` in tseries/frequencies. Not
     public."""
     if key is None:
         return None
-    split = key.replace('@', '-').split('-')
+    split = key.split('-')
     klass = prefix_mapping[split[0]]
     # handles case where there's no suffix (and will TypeError if too many '-')
     obj = klass._from_name(*split[1:])

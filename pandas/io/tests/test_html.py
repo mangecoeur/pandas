@@ -20,7 +20,7 @@ from numpy.testing.decorators import slow
 
 from pandas import (DataFrame, MultiIndex, read_csv, Timestamp, Index,
                     date_range, Series)
-from pandas.compat import map, zip, StringIO, string_types, BytesIO
+from pandas.compat import map, zip, StringIO, string_types, BytesIO, is_platform_windows
 from pandas.io.common import URLError, urlopen, file_path_to_url
 from pandas.io.html import read_html
 from pandas.parser import CParserError
@@ -358,20 +358,16 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
 
     @network
     def test_multiple_matches(self):
-        raise nose.SkipTest("pythonxy link seems to have changed")
-
-        url = 'http://code.google.com/p/pythonxy/wiki/StandardPlugins'
-        dfs = self.read_html(url, match='Python', attrs={'class': 'wikitable'})
+        url = 'https://docs.python.org/2/'
+        dfs = self.read_html(url, match='Python')
         self.assertTrue(len(dfs) > 1)
 
     @network
-    def test_pythonxy_plugins_table(self):
-        raise nose.SkipTest("pythonxy link seems to have changed")
-
-        url = 'http://code.google.com/p/pythonxy/wiki/StandardPlugins'
-        dfs = self.read_html(url, match='Python', attrs={'class': 'wikitable'})
-        zz = [df.iloc[0, 0] for df in dfs]
-        self.assertEqual(sorted(zz), sorted(['Python', 'SciTE']))
+    def test_python_docs_table(self):
+        url = 'https://docs.python.org/2/'
+        dfs = self.read_html(url, match='Python')
+        zz = [df.iloc[0, 0][0:4] for df in dfs]
+        self.assertEqual(sorted(zz), sorted(['Repo', 'What']))
 
     @slow
     def test_thousands_macau_stats(self):
@@ -531,10 +527,10 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
                'Hamilton Bank, NA', 'The Citizens Savings Bank']
         dfnew = df.applymap(try_remove_ws).replace(old, new)
         gtnew = ground_truth.applymap(try_remove_ws)
-        converted = dfnew.convert_objects(datetime=True, numeric=True)
+        converted = dfnew._convert(datetime=True, numeric=True)
         date_cols = ['Closing Date','Updated Date']
-        converted[date_cols] = converted[date_cols].convert_objects(datetime=True,
-                                                                    coerce=True)
+        converted[date_cols] = converted[date_cols]._convert(datetime=True,
+                                                             coerce=True)
         tm.assert_frame_equal(converted,gtnew)
 
     @slow
@@ -641,6 +637,11 @@ class TestReadHtml(tm.TestCase, ReadHtmlMixin):
         result = self.read_html(data, 'Arizona', header=1)[0]
         nose.tools.assert_equal(result['sq mi'].dtype, np.dtype('float64'))
 
+    def test_bool_header_arg(self):
+        #GH 6114
+        for arg in [True, False]:
+            with tm.assertRaises(TypeError):
+                read_html(self.spam_data, header=arg)
 
 def _lang_enc(filename):
     return os.path.splitext(os.path.basename(filename))[0].split('_')
@@ -675,12 +676,19 @@ class TestReadHtmlEncoding(tm.TestCase):
         assert self.files, 'no files read from the data folder'
         for f in self.files:
             _, encoding = _lang_enc(f)
-            from_string = self.read_string(f, encoding).pop()
-            from_file_like = self.read_file_like(f, encoding).pop()
-            from_filename = self.read_filename(f, encoding).pop()
-            tm.assert_frame_equal(from_string, from_file_like)
-            tm.assert_frame_equal(from_string, from_filename)
+            try:
+                from_string = self.read_string(f, encoding).pop()
+                from_file_like = self.read_file_like(f, encoding).pop()
+                from_filename = self.read_filename(f, encoding).pop()
+                tm.assert_frame_equal(from_string, from_file_like)
+                tm.assert_frame_equal(from_string, from_filename)
+            except Exception as e:
 
+                # seems utf-16/32 fail on windows
+                if is_platform_windows():
+                    if '16' in encoding or '32' in encoding:
+                        continue
+                    raise
 
 class TestReadHtmlEncodingLxml(TestReadHtmlEncoding):
     flavor = 'lxml'

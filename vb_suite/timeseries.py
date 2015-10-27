@@ -11,7 +11,7 @@ except NameError:
         return DatetimeIndex(start=start, end=end, periods=periods, offset=freq)
 
 
-common_setup = """from pandas_vb_common import *
+common_setup = """from .pandas_vb_common import *
 from datetime import timedelta
 N = 100000
 
@@ -110,7 +110,7 @@ timeseries_asof_nan = Benchmark('ts.asof(dates)', setup,
                                 start_date=datetime(2012, 4, 27))
 
 #----------------------------------------------------------------------
-# Time zone stuff
+# Time zone
 
 setup = common_setup + """
 rng = date_range(start='1/1/2000', end='3/1/2000', tz='US/Eastern')
@@ -312,7 +312,10 @@ datetimeindex_converter = \
 setup = common_setup + """
 import datetime as dt
 import pandas as pd
-import pandas.tseries.holiday
+try:
+    import pandas.tseries.holiday
+except ImportError:
+    pass
 import numpy as np
 
 date = dt.datetime(2011,1,1)
@@ -417,9 +420,9 @@ timeseries_iter_periodindex_preexit = Benchmark('iter_n(idx2, M)', setup)
 setup = common_setup + """
 N = 100000
 idx1 = date_range(start='20140101', freq='T', periods=N)
-delta_offset = Day()
-fast_offset = DateOffset(months=2, days=2)
-slow_offset = offsets.BusinessDay()
+delta_offset = pd.offsets.Day()
+fast_offset = pd.offsets.DateOffset(months=2, days=2)
+slow_offset = pd.offsets.BusinessDay()
 
 """
 
@@ -431,9 +434,9 @@ timeseries_datetimeindex_offset_slow = Benchmark('idx1 + slow_offset', setup)
 setup = common_setup + """
 N = 100000
 s = Series(date_range(start='20140101', freq='T', periods=N))
-delta_offset = Day()
-fast_offset = DateOffset(months=2, days=2)
-slow_offset = offsets.BusinessDay()
+delta_offset = pd.offsets.Day()
+fast_offset = pd.offsets.DateOffset(months=2, days=2)
+slow_offset = pd.offsets.BusinessDay()
 
 """
 

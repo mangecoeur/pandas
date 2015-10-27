@@ -28,8 +28,6 @@ class TestMultiLevel(tm.TestCase):
     _multiprocess_can_split_ = True
 
     def setUp(self):
-        import warnings
-        warnings.filterwarnings(action='ignore', category=FutureWarning)
 
         index = MultiIndex(levels=[['foo', 'bar', 'baz', 'qux'],
                                    ['one', 'two', 'three']],
@@ -829,7 +827,7 @@ x   q   30      3    -0.6662 -0.5243 -0.3580  0.89145  2.5838"""
             index = frame._get_axis(axis)
             for i in range(index.nlevels):
                 result = frame.count(axis=axis, level=i)
-                expected = frame.groupby(axis=axis, level=i).count(axis=axis)
+                expected = frame.groupby(axis=axis, level=i).count()
                 expected = expected.reindex_like(result).astype('i8')
                 assert_frame_equal(result, expected)
 
@@ -2187,6 +2185,21 @@ Thur,Lunch,Yes,51.51,17"""
             index = pd.MultiIndex.from_product([[d1],[d2]])
             self.assertIsInstance(index.levels[0],pd.DatetimeIndex)
             self.assertIsInstance(index.levels[1],pd.DatetimeIndex)
+
+    def test_constructor_with_tz(self):
+
+        index = pd.DatetimeIndex(['2013/01/01 09:00', '2013/01/02 09:00'],
+                                 name='dt1', tz='US/Pacific')
+        columns = pd.DatetimeIndex(['2014/01/01 09:00', '2014/01/02 09:00'],
+                                   name='dt2', tz='Asia/Tokyo')
+
+        result = MultiIndex.from_arrays([index, columns])
+        tm.assert_index_equal(result.levels[0], index)
+        tm.assert_index_equal(result.levels[1], columns)
+
+        result = MultiIndex.from_arrays([Series(index), Series(columns)])
+        tm.assert_index_equal(result.levels[0], index)
+        tm.assert_index_equal(result.levels[1], columns)
 
     def test_set_index_datetime(self):
         # GH 3950

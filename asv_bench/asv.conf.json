@@ -42,6 +42,10 @@
         "scipy": [],
         "numexpr": [],
         "pytables": [],
+        "openpyxl": [],
+        "xlsxwriter": [],
+        "xlrd": [],
+        "xlwt": []
     },
 
     // The directory (relative to the current directory) that benchmarks are

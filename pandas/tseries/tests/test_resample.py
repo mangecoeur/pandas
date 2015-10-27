@@ -916,6 +916,45 @@ class TestResample(tm.TestCase):
             result = df.groupby(pd.Grouper(freq='M', key='A')).count()
             assert_frame_equal(result, expected)
 
+    def test_resample_group_info(self):  # GH10914
+        for n, k in product((10000, 100000), (10, 100, 1000)):
+            dr = date_range(start='2015-08-27', periods=n // 10, freq='T')
+            ts = Series(np.random.randint(0, n // k, n).astype('int64'),
+                        index=np.random.choice(dr, n))
+
+            left = ts.resample('30T', how='nunique')
+            ix = date_range(start=ts.index.min(),
+                            end=ts.index.max(),
+                            freq='30T')
+
+            vals = ts.values
+            bins = np.searchsorted(ix.values, ts.index, side='right')
+
+            sorter = np.lexsort((vals, bins))
+            vals, bins = vals[sorter], bins[sorter]
+
+            mask = np.r_[True, vals[1:] != vals[:-1]]
+            mask |= np.r_[True, bins[1:] != bins[:-1]]
+
+            arr = np.bincount(bins[mask] - 1, minlength=len(ix)).astype('int64',copy=False)
+            right = Series(arr, index=ix)
+
+            assert_series_equal(left, right)
+
+    def test_resample_size(self):
+        n = 10000
+        dr = date_range('2015-09-19', periods=n, freq='T')
+        ts = Series(np.random.randn(n), index=np.random.choice(dr, n))
+
+        left = ts.resample('7T', how='size')
+        ix = date_range(start=left.index.min(), end=ts.index.max(), freq='7T')
+
+        bins = np.searchsorted(ix.values, ts.index.values, side='right')
+        val = np.bincount(bins, minlength=len(ix) + 1)[1:].astype('int64',copy=False)
+
+        right = Series(val, index=ix)
+        assert_series_equal(left, right)
+
     def test_resmaple_dst_anchor(self):
         # 5172
         dti = DatetimeIndex([datetime(2012, 11, 4, 23)], tz='US/Eastern')
@@ -1560,7 +1599,7 @@ class TestTimeGrouper(tm.TestCase):
         # check TimeGrouper's aggregation is identical as normal groupby
 
         n = 20
-        data = np.random.randn(n, 4)
+        data = np.random.randn(n, 4).astype('int64')
         normal_df = DataFrame(data, columns=['A', 'B', 'C', 'D'])
         normal_df['key'] = [1, 2, np.nan, 4, 5] * 4
 
@@ -1571,7 +1610,7 @@ class TestTimeGrouper(tm.TestCase):
         normal_grouped = normal_df.groupby('key')
         dt_grouped = dt_df.groupby(TimeGrouper(key='key', freq='D'))
 
-        for func in ['min', 'max', 'prod']:
+        for func in ['min', 'max', 'sum', 'prod']:
             normal_result = getattr(normal_grouped, func)()
             dt_result = getattr(dt_grouped, func)()
             pad = DataFrame([[np.nan, np.nan, np.nan, np.nan]],
@@ -1581,7 +1620,7 @@ class TestTimeGrouper(tm.TestCase):
             expected.index = date_range(start='2013-01-01', freq='D', periods=5, name='key')
             assert_frame_equal(expected, dt_result)
 
-        for func in ['count', 'sum']:
+        for func in ['count']:
             normal_result = getattr(normal_grouped, func)()
             pad = DataFrame([[0, 0, 0, 0]], index=[3], columns=['A', 'B', 'C', 'D'])
             expected = normal_result.append(pad)

@@ -3,6 +3,7 @@ import warnings
 import operator
 import weakref
 import gc
+
 import numpy as np
 import pandas.lib as lib
 
@@ -26,6 +27,7 @@ from pandas.core.common import (isnull, notnull, is_list_like,
 import pandas.core.nanops as nanops
 from pandas.util.decorators import Appender, Substitution, deprecate_kwarg
 from pandas.core import config
+
 
 # goal is to be able to define the docs close to function, while still being
 # able to share
@@ -501,12 +503,17 @@ class NDFrame(PandasObject):
         """
         result = self[item]
         del self[item]
+        try:
+            result._reset_cacher()
+        except AttributeError:
+            pass
+
         return result
 
     def squeeze(self):
         """ squeeze length 1 dimensions """
         try:
-            return self.ix[tuple([slice(None) if len(a) > 1 else a[0]
+            return self.iloc[tuple([0 if len(a) == 1 else slice(None)
                                   for a in self.axes])]
         except:
             return self
@@ -701,7 +708,7 @@ class NDFrame(PandasObject):
         "iteritems alias used to get around 2to3. Deprecated"
         warnings.warn("iterkv is deprecated and will be removed in a future "
                       "release, use ``iteritems`` instead.",
-                      FutureWarning)
+                      FutureWarning, stacklevel=2)
         return self.iteritems(*args, **kwargs)
 
     def __len__(self):
@@ -1094,6 +1101,11 @@ class NDFrame(PandasObject):
             a weakref to cacher """
         self._cacher = (item, weakref.ref(cacher))
 
+    def _reset_cacher(self):
+        """ reset the cacher """
+        if hasattr(self,'_cacher'):
+            del self._cacher
+
     def _iget_item_cache(self, item):
         """ return the cached item, item represents a positional indexer """
         ax = self._info_axis
@@ -1330,6 +1342,7 @@ class NDFrame(PandasObject):
             # exception:
             self._data.delete(key)
 
+        # delete from the caches
         try:
             del self._item_cache[key]
         except KeyError:
@@ -1764,7 +1777,9 @@ class NDFrame(PandasObject):
             New labels / index to conform to. Preferably an Index object to
             avoid duplicating data
         method : {None, 'backfill'/'bfill', 'pad'/'ffill', 'nearest'}, optional
-            Method to use for filling holes in reindexed DataFrame:
+            method to use for filling holes in reindexed DataFrame.
+            Please note: this is only  applicable to DataFrames/Series with a 
+            monotonically increasing/decreasing index.
               * default: don't fill gaps
               * pad / ffill: propagate last valid observation forward to next valid
               * backfill / bfill: use next valid observation to fill gap
@@ -1788,7 +1803,118 @@ class NDFrame(PandasObject):
 
         Examples
         --------
-        >>> df.reindex(index=[date1, date2, date3], columns=['A', 'B', 'C'])
+
+        Create a dataframe with some fictional data.
+
+        >>> index = ['Firefox', 'Chrome', 'Safari', 'IE10', 'Konqueror']
+        >>> df = pd.DataFrame({
+        ...      'http_status': [200,200,404,404,301],
+        ...      'response_time': [0.04, 0.02, 0.07, 0.08, 1.0]},
+        ...       index=index)
+        >>> df
+                    http_status  response_time
+        Firefox            200           0.04
+        Chrome             200           0.02
+        Safari             404           0.07
+        IE10               404           0.08
+        Konqueror          301           1.00
+
+        Create a new index and reindex the dataframe. By default
+        values in the new index that do not have corresponding
+        records in the dataframe are assigned ``NaN``. 
+
+        >>> new_index= ['Safari', 'Iceweasel', 'Comodo Dragon', 'IE10',
+        ...             'Chrome']
+        >>> df.reindex(new_index)
+                       http_status  response_time
+        Safari                 404           0.07
+        Iceweasel              NaN            NaN
+        Comodo Dragon          NaN            NaN
+        IE10                   404           0.08
+        Chrome                 200           0.02
+
+        We can fill in the missing values by passing a value to
+        the keyword ``fill_value``. Because the index is not monotonically
+        increasing or decreasing, we cannot use arguments to the keyword  
+        ``method`` to fill the ``NaN`` values. 
+
+        >>> df.reindex(new_index, fill_value=0)
+                       http_status  response_time
+        Safari                 404           0.07
+        Iceweasel                0           0.00
+        Comodo Dragon            0           0.00
+        IE10                   404           0.08
+        Chrome                 200           0.02
+
+        >>> df.reindex(new_index, fill_value='missing')
+                      http_status response_time
+        Safari                404          0.07
+        Iceweasel         missing       missing
+        Comodo Dragon     missing       missing
+        IE10                  404          0.08
+        Chrome                200          0.02
+
+        To further illustrate the filling functionality in 
+        ``reindex``, we will create a dataframe with a 
+        monotonically increasing index (for example, a sequence
+        of dates).
+
+        >>> date_index = pd.date_range('1/1/2010', periods=6, freq='D')
+        >>> df2 = pd.DataFrame({"prices": [100, 101, np.nan, 100, 89, 88]},
+                index=date_index)
+        >>> df2
+                    prices
+        2010-01-01     100
+        2010-01-02     101
+        2010-01-03     NaN
+        2010-01-04     100
+        2010-01-05      89
+        2010-01-06      88
+
+        Suppose we decide to expand the dataframe to cover a wider
+        date range. 
+
+        >>> date_index2 = pd.date_range('12/29/2009', periods=10, freq='D')
+        >>> df2.reindex(date_index2)
+                    prices
+        2009-12-29     NaN
+        2009-12-30     NaN
+        2009-12-31     NaN
+        2010-01-01     100
+        2010-01-02     101
+        2010-01-03     NaN
+        2010-01-04     100
+        2010-01-05      89
+        2010-01-06      88
+        2010-01-07     NaN
+
+        The index entries that did not have a value in the original data frame
+        (for example, '2009-12-29') are by default filled with ``NaN``. 
+        If desired, we can fill in the missing values using one of several
+        options. 
+        
+        For example, to backpropagate the last valid value to fill the ``NaN``
+        values, pass ``bfill`` as an argument to the ``method`` keyword.
+
+        >>> df2.reindex(date_index2, method='bfill')
+                    prices
+        2009-12-29     100
+        2009-12-30     100
+        2009-12-31     100
+        2010-01-01     100
+        2010-01-02     101
+        2010-01-03     NaN
+        2010-01-04     100
+        2010-01-05      89
+        2010-01-06      88
+        2010-01-07     NaN
+
+        Please note that the ``NaN`` value present in the original dataframe
+        (at index value 2010-01-03) will not be filled by any of the 
+        value propagation schemes. This is because filling while reindexing
+        does not look at dataframe values, but only compares the original and
+        desired indexes. If you do want to fill in the ``NaN`` values present
+        in the original dataframe, use the ``fillna()`` method.
 
         Returns
         -------
@@ -2407,6 +2533,11 @@ class NDFrame(PandasObject):
         return self.as_matrix()
 
     @property
+    def _values(self):
+        """ internal implementation """
+        return self.values
+
+    @property
     def _get_values(self):
         # compat
         return self.as_matrix()
@@ -2453,6 +2584,8 @@ class NDFrame(PandasObject):
         Parameters
         ----------
         copy : boolean, default True
+
+               .. versionadded: 0.16.1
 
         Returns
         -------
@@ -2514,11 +2647,8 @@ class NDFrame(PandasObject):
         data = self._data.copy(deep=deep)
         return self._constructor(data).__finalize__(self)
 
-    @deprecate_kwarg(old_arg_name='convert_dates', new_arg_name='datetime')
-    @deprecate_kwarg(old_arg_name='convert_numeric', new_arg_name='numeric')
-    @deprecate_kwarg(old_arg_name='convert_timedeltas', new_arg_name='timedelta')
-    def convert_objects(self, datetime=False, numeric=False,
-                        timedelta=False, coerce=False, copy=True):
+    def _convert(self, datetime=False, numeric=False, timedelta=False,
+                 coerce=False, copy=True):
         """
         Attempt to infer better dtype for object columns
 
@@ -2545,9 +2675,46 @@ class NDFrame(PandasObject):
         """
         return self._constructor(
             self._data.convert(datetime=datetime,
-                               numeric=numeric,
-                               timedelta=timedelta,
-                               coerce=coerce,
+                                numeric=numeric,
+                                timedelta=timedelta,
+                                coerce=coerce,
+                                copy=copy)).__finalize__(self)
+
+    # TODO: Remove in 0.18 or 2017, which ever is sooner
+    def convert_objects(self, convert_dates=True, convert_numeric=False,
+                        convert_timedeltas=True, copy=True):
+        """
+        Attempt to infer better dtype for object columns
+
+        Parameters
+        ----------
+        convert_dates : boolean, default True
+            If True, convert to date where possible. If 'coerce', force
+            conversion, with unconvertible values becoming NaT.
+        convert_numeric : boolean, default False
+            If True, attempt to coerce to numbers (including strings), with
+            unconvertible values becoming NaN.
+        convert_timedeltas : boolean, default True
+            If True, convert to timedelta where possible. If 'coerce', force
+            conversion, with unconvertible values becoming NaT.
+        copy : boolean, default True
+            If True, return a copy even if no copy is necessary (e.g. no
+            conversion was done). Note: This is meant for internal use, and
+            should not be confused with inplace.
+
+        Returns
+        -------
+        converted : same as input object
+        """
+        from warnings import warn
+        warn("convert_objects is deprecated.  Use the data-type specific "
+             "converters pd.to_datetime, pd.to_timedelta and pd.to_numeric.",
+             FutureWarning, stacklevel=2)
+
+        return self._constructor(
+            self._data.convert(convert_dates=convert_dates,
+                               convert_numeric=convert_numeric,
+                               convert_timedeltas=convert_timedeltas,
                                copy=copy)).__finalize__(self)
 
     #----------------------------------------------------------------------
@@ -2945,15 +3112,13 @@ class NDFrame(PandasObject):
                            '{0!r}').format(type(to_replace).__name__)
                     raise TypeError(msg)  # pragma: no cover
 
-        new_data = new_data.convert(copy=not inplace, numeric=False)
-
         if inplace:
             self._update_inplace(new_data)
         else:
             return self._constructor(new_data).__finalize__(self)
 
     def interpolate(self, method='linear', axis=0, limit=None, inplace=False,
-                    downcast=None, **kwargs):
+                    limit_direction='forward', downcast=None, **kwargs):
         """
         Interpolate values according to different methods.
 
@@ -2981,15 +3146,21 @@ class NDFrame(PandasObject):
             * 'krogh', 'piecewise_polynomial', 'spline', and 'pchip' are all
               wrappers around the scipy interpolation methods of similar
               names. These use the actual numerical values of the index. See
-              the scipy documentation for more on their behavior:
-              http://docs.scipy.org/doc/scipy/reference/interpolate.html#univariate-interpolation
-              http://docs.scipy.org/doc/scipy/reference/tutorial/interpolate.html
+              the scipy documentation for more on their behavior
+              `here <http://docs.scipy.org/doc/scipy/reference/interpolate.html#univariate-interpolation>`__
+              `and here <http://docs.scipy.org/doc/scipy/reference/tutorial/interpolate.html>`__
 
         axis : {0, 1}, default 0
             * 0: fill column-by-column
             * 1: fill row-by-row
         limit : int, default None.
             Maximum number of consecutive NaNs to fill.
+        limit_direction : {'forward', 'backward', 'both'}, defaults to 'forward'
+            If limit is specified, consecutive NaNs will be filled in this
+            direction.
+
+            .. versionadded:: 0.17.0
+
         inplace : bool, default False
             Update the NDFrame in place if possible.
         downcast : optional, 'infer' or None, defaults to None
@@ -3060,6 +3231,7 @@ class NDFrame(PandasObject):
             index=index,
             values=_maybe_transposed_self,
             limit=limit,
+            limit_direction=limit_direction,
             inplace=inplace,
             downcast=downcast,
             **kwargs
@@ -3229,11 +3401,13 @@ class NDFrame(PandasObject):
             index. Only relevant for DataFrame input. as_index=False is
             effectively "SQL-style" grouped output
         sort : boolean, default True
-            Sort group keys. Get better performance by turning this off
+            Sort group keys. Get better performance by turning this off.
+            Note this does not influence the order of observations within each group.
+            groupby preserves the order of rows within each group.
         group_keys : boolean, default True
             When calling apply, add group keys to index to identify pieces
         squeeze : boolean, default False
-            reduce the dimensionaility of the return type if possible,
+            reduce the dimensionality of the return type if possible,
             otherwise return a consistent type
 
         Examples
@@ -3358,7 +3532,107 @@ class NDFrame(PandasObject):
             For frequencies that evenly subdivide 1 day, the "origin" of the
             aggregated intervals. For example, for '5min' frequency, base could
             range from 0 through 4. Defaults to 0
+
+
+        Examples
+        --------
+
+        Start by creating a series with 9 one minute timestamps.
+
+        >>> index = pd.date_range('1/1/2000', periods=9, freq='T')
+        >>> series = pd.Series(range(9), index=index)
+        >>> series
+        2000-01-01 00:00:00    0
+        2000-01-01 00:01:00    1
+        2000-01-01 00:02:00    2
+        2000-01-01 00:03:00    3
+        2000-01-01 00:04:00    4
+        2000-01-01 00:05:00    5
+        2000-01-01 00:06:00    6
+        2000-01-01 00:07:00    7
+        2000-01-01 00:08:00    8
+        Freq: T, dtype: int64
+
+        Downsample the series into 3 minute bins and sum the values
+        of the timestamps falling into a bin.
+
+        >>> series.resample('3T', how='sum')
+        2000-01-01 00:00:00     3
+        2000-01-01 00:03:00    12
+        2000-01-01 00:06:00    21
+        Freq: 3T, dtype: int64
+
+        Downsample the series into 3 minute bins as above, but label each
+        bin using the right edge instead of the left. Please note that the
+        value in the bucket used as the label is not included in the bucket,
+        which it labels. For example, in the original series the
+        bucket ``2000-01-01 00:03:00`` contains the value 3, but the summed
+        value in the resampled bucket with the label``2000-01-01 00:03:00``
+        does not include 3 (if it did, the summed value would be 6, not 3).
+        To include this value close the right side of the bin interval as
+        illustrated in the example below this one.
+
+        >>> series.resample('3T', how='sum', label='right')
+        2000-01-01 00:03:00     3
+        2000-01-01 00:06:00    12
+        2000-01-01 00:09:00    21
+        Freq: 3T, dtype: int64
+
+        Downsample the series into 3 minute bins as above, but close the right
+        side of the bin interval.
+
+        >>> series.resample('3T', how='sum', label='right', closed='right')
+        2000-01-01 00:00:00     0
+        2000-01-01 00:03:00     6
+        2000-01-01 00:06:00    15
+        2000-01-01 00:09:00    15
+        Freq: 3T, dtype: int64
+
+        Upsample the series into 30 second bins.
+
+        >>> series.resample('30S')[0:5] #select first 5 rows
+        2000-01-01 00:00:00     0
+        2000-01-01 00:00:30   NaN
+        2000-01-01 00:01:00     1
+        2000-01-01 00:01:30   NaN
+        2000-01-01 00:02:00     2
+        Freq: 30S, dtype: float64
+
+        Upsample the series into 30 second bins and fill the ``NaN``
+        values using the ``pad`` method.
+
+        >>> series.resample('30S', fill_method='pad')[0:5]
+        2000-01-01 00:00:00    0
+        2000-01-01 00:00:30    0
+        2000-01-01 00:01:00    1
+        2000-01-01 00:01:30    1
+        2000-01-01 00:02:00    2
+        Freq: 30S, dtype: int64
+
+        Upsample the series into 30 second bins and fill the
+        ``NaN`` values using the ``bfill`` method.
+
+        >>> series.resample('30S', fill_method='bfill')[0:5]
+        2000-01-01 00:00:00    0
+        2000-01-01 00:00:30    1
+        2000-01-01 00:01:00    1
+        2000-01-01 00:01:30    2
+        2000-01-01 00:02:00    2
+        Freq: 30S, dtype: int64
+
+        Pass a custom function to ``how``.
+
+        >>> def custom_resampler(array_like):
+        ...     return np.sum(array_like)+5
+
+        >>> series.resample('3T', how=custom_resampler)
+        2000-01-01 00:00:00     8
+        2000-01-01 00:03:00    17
+        2000-01-01 00:06:00    26
+        Freq: 3T, dtype: int64
+
         """
+
         from pandas.tseries.resample import TimeGrouper
         axis = self._get_axis_number(axis)
         sampler = TimeGrouper(rule, label=label, closed=closed, how=how,

@@ -1,6 +1,10 @@
-from pandas_vb_common import *
-from pandas import concat, Timestamp
-from StringIO import StringIO
+from .pandas_vb_common import *
+from pandas import concat, Timestamp, compat
+try:
+    from StringIO import StringIO
+except ImportError:
+    from io import StringIO
+import timeit
 
 
 class frame_to_csv(object):
@@ -41,19 +45,19 @@ class frame_to_csv_mixed(object):
     goal_time = 0.2
 
     def setup(self):
-
-        def create_cols(name):
-            return [('%s%03d' % (name, i)) for i in xrange(5)]
-        self.df_float = DataFrame(np.random.randn(5000, 5), dtype='float64', columns=create_cols('float'))
-        self.df_int = DataFrame(np.random.randn(5000, 5), dtype='int64', columns=create_cols('int'))
-        self.df_bool = DataFrame(True, index=self.df_float.index, columns=create_cols('bool'))
-        self.df_object = DataFrame('foo', index=self.df_float.index, columns=create_cols('object'))
-        self.df_dt = DataFrame(Timestamp('20010101'), index=self.df_float.index, columns=create_cols('date'))
+        self.df_float = DataFrame(np.random.randn(5000, 5), dtype='float64', columns=self.create_cols('float'))
+        self.df_int = DataFrame(np.random.randn(5000, 5), dtype='int64', columns=self.create_cols('int'))
+        self.df_bool = DataFrame(True, index=self.df_float.index, columns=self.create_cols('bool'))
+        self.df_object = DataFrame('foo', index=self.df_float.index, columns=self.create_cols('object'))
+        self.df_dt = DataFrame(Timestamp('20010101'), index=self.df_float.index, columns=self.create_cols('date'))
         self.df_float.ix[30:500, 1:3] = np.nan
         self.df = concat([self.df_float, self.df_int, self.df_bool, self.df_object, self.df_dt], axis=1)
 
     def time_frame_to_csv_mixed(self):
         self.df.to_csv('__test__.csv')
+
+    def create_cols(self, name):
+        return [('%s%03d' % (name, i)) for i in range(5)]
 
 
 class read_csv_infer_datetime_format_custom(object):
@@ -133,3 +137,35 @@ class write_csv_standard(object):
 
     def time_write_csv_standard(self):
         self.df.to_csv('__test__.csv')
+
+
+class read_csv_from_s3(object):
+    # Make sure that we can read part of a file from S3 without
+    # needing to download the entire thing. Use the timeit.default_timer
+    # to measure wall time instead of CPU time -- we want to see
+    # how long it takes to download the data.
+    timer = timeit.default_timer
+    params = ([None, "gzip", "bz2"], ["python", "c"])
+    param_names = ["compression", "engine"]
+
+    def setup(self, compression, engine):
+        if compression == "bz2" and engine == "c" and compat.PY2:
+            # The Python 2 C parser can't read bz2 from open files.
+            raise NotImplementedError
+        try:
+            import boto
+        except ImportError:
+            # Skip these benchmarks if `boto` is not installed.
+            raise NotImplementedError
+
+        self.big_fname = "s3://pandas-test/large_random.csv"
+
+    def time_read_nrows(self, compression, engine):
+        # Read a small number of rows from a huge (100,000 x 50) table.
+        ext = ""
+        if compression == "gzip":
+            ext = ".gz"
+        elif compression == "bz2":
+            ext = ".bz2"
+        pd.read_csv(self.big_fname + ext, nrows=10,
+                    compression=compression, engine=engine)

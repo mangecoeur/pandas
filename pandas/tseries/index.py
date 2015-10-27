@@ -7,8 +7,11 @@ from datetime import timedelta
 import numpy as np
 from pandas.core.common import (_NS_DTYPE, _INT64_DTYPE,
                                 _values_from_object, _maybe_box,
+                                is_object_dtype, is_datetime64_dtype,
+                                is_datetimetz, is_dtype_equal,
                                 ABCSeries, is_integer, is_float,
-                                is_object_dtype, is_datetime64_dtype)
+                                DatetimeTZDtype)
+
 from pandas.io.common import PerformanceWarning
 from pandas.core.index import Index, Int64Index, Float64Index
 import pandas.compat as compat
@@ -114,11 +117,13 @@ def _new_DatetimeIndex(cls, d):
     """ This is called upon unpickling, rather than the default which doesn't have arguments
         and breaks __new__ """
 
-    # simply set the tz
     # data are already in UTC
+    # so need to localize
     tz = d.pop('tz',None)
-    result = cls.__new__(cls, **d)
-    result.tz = tz
+
+    result = cls.__new__(cls, verify_integrity=False, **d)
+    if tz is not None:
+        result = result.tz_localize('UTC').tz_convert(tz)
     return result
 
 class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
@@ -189,7 +194,8 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
     _datetimelike_ops = ['year','month','day','hour','minute','second',
                          'weekofyear','week','dayofweek','weekday','dayofyear','quarter', 'days_in_month', 'daysinmonth',
                          'date','time','microsecond','nanosecond','is_month_start','is_month_end',
-                         'is_quarter_start','is_quarter_end','is_year_start','is_year_end','tz','freq']
+                         'is_quarter_start','is_quarter_end','is_year_start','is_year_end',
+                         'tz','freq']
     _is_numeric_dtype = False
 
 
@@ -199,7 +205,7 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
                 freq=None, start=None, end=None, periods=None,
                 copy=False, name=None, tz=None,
                 verify_integrity=True, normalize=False,
-                closed=None, ambiguous='raise', **kwargs):
+                closed=None, ambiguous='raise', dtype=None, **kwargs):
 
         dayfirst = kwargs.pop('dayfirst', None)
         yearfirst = kwargs.pop('yearfirst', None)
@@ -264,9 +270,9 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
                                                      dayfirst=dayfirst,
                                                      yearfirst=yearfirst)
 
-        if issubclass(data.dtype.type, np.datetime64):
+        if issubclass(data.dtype.type, np.datetime64) or is_datetimetz(data):
             if isinstance(data, ABCSeries):
-                data = data.values
+                data = data._values
             if isinstance(data, DatetimeIndex):
                 if tz is None:
                     tz = data.tz
@@ -290,7 +296,7 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
                 subarr = data.view(_NS_DTYPE)
         else:
             if isinstance(data, (ABCSeries, Index)):
-                values = data.values
+                values = data._values
             else:
                 values = data
 
@@ -304,7 +310,7 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
 
                     # make sure that we have a index/ndarray like (and not a Series)
                     if isinstance(subarr, ABCSeries):
-                        subarr = subarr.values
+                        subarr = subarr._values
                         if subarr.dtype == np.object_:
                             subarr = tools._to_datetime(subarr, box=False)
 
@@ -312,7 +318,8 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
                     # tz aware
                     subarr = tools._to_datetime(data, box=False, utc=True)
 
-                if not np.issubdtype(subarr.dtype, np.datetime64):
+                # we may not have been able to convert
+                if not (is_datetimetz(subarr) or np.issubdtype(subarr.dtype, np.datetime64)):
                     raise ValueError('Unable to convert %s to datetime dtype'
                                      % str(data))
 
@@ -333,6 +340,16 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
                 subarr = subarr.view(_NS_DTYPE)
 
         subarr = cls._simple_new(subarr, name=name, freq=freq, tz=tz)
+
+        # if dtype is provided, coerce here
+        if dtype is not None:
+
+            if not is_dtype_equal(subarr.dtype, dtype):
+
+                if subarr.tz is not None:
+                    raise ValueError("cannot localize from non-UTC data")
+                dtype = DatetimeTZDtype.construct_from_string(dtype)
+                subarr = subarr.tz_localize(dtype.tz)
 
         if verify_integrity and len(subarr) > 0:
             if freq is not None and not freq_infer:
@@ -498,16 +515,21 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
             return result.take(reverse)
 
     @classmethod
-    def _simple_new(cls, values, name=None, freq=None, tz=None, **kwargs):
+    def _simple_new(cls, values, name=None, freq=None, tz=None, dtype=None, **kwargs):
         """
         we require the we have a dtype compat for the values
         if we are passed a non-dtype compat, then coerce using the constructor
         """
 
         if not getattr(values,'dtype',None):
+            # empty, but with dtype compat
+            if values is None:
+                values = np.empty(0, dtype=_NS_DTYPE)
+                return cls(values, name=name, freq=freq, tz=tz, dtype=dtype, **kwargs)
             values = np.array(values,copy=False)
+
         if is_object_dtype(values):
-            return cls(values, name=name, freq=freq, tz=tz, **kwargs).values
+            return cls(values, name=name, freq=freq, tz=tz, dtype=dtype, **kwargs).values
         elif not is_datetime64_dtype(values):
             values = com._ensure_int64(values).view(_NS_DTYPE)
 
@@ -666,6 +688,14 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
         result = self._maybe_mask_results(result,fill_value=tslib.iNaT)
         return TimedeltaIndex(result,name=self.name,copy=False)
 
+    def _maybe_update_attributes(self, attrs):
+        """ Update Index attributes (e.g. freq) depending on op """
+        freq = attrs.get('freq', None)
+        if freq is not None:
+            # no need to infer if freq is None
+            attrs['freq'] = 'infer'
+        return attrs
+
     def _add_delta(self, delta):
         from pandas import TimedeltaIndex
         name = self.name
@@ -690,7 +720,15 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
 
     def _add_offset(self, offset):
         try:
-            return offset.apply_index(self)
+            if self.tz is not None:
+                values = self.tz_localize(None)
+            else:
+                values = self
+            result = offset.apply_index(values)
+            if self.tz is not None:
+                result = result.tz_localize(self.tz)
+            return result
+
         except NotImplementedError:
             warnings.warn("Non-vectorized DateOffset being applied to Series or DatetimeIndex",
                            PerformanceWarning)
@@ -716,6 +754,10 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
             return self.asobject
         elif dtype == _INT64_DTYPE:
             return self.asi8.copy()
+        elif dtype == _NS_DTYPE and self.tz is not None:
+            return self.tz_convert('UTC').tz_localize(None)
+        elif dtype == str:
+            return self._shallow_copy(values=self.format(), infer=True)
         else:  # pragma: no cover
             raise ValueError('Cannot cast DatetimeIndex to dtype %s' % dtype)
 
@@ -740,7 +782,8 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
 
                     If the timezone is not set, the resulting
                     Series will have a datetime64[ns] dtype.
-                    Otherwise the Series will have an object dtype; the
+
+                    Otherwise the Series will have an datetime64[ns, tz] dtype; the
                     tz will be preserved.
 
                   If keep_tz is False:
@@ -762,8 +805,11 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
         This is for internal compat
         """
         if keep_tz and self.tz is not None:
-            return self.asobject.values
-        return self.values
+
+            # preserve the tz & copy
+            return self.copy(deep=True)
+
+        return self.values.copy()
 
     def to_pydatetime(self):
         """
@@ -845,7 +891,8 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
             result = Index.union(this, other)
             if isinstance(result, DatetimeIndex):
                 result.tz = this.tz
-                if result.freq is None:
+                if (result.freq is None and
+                        (this.freq is not None or other.freq is not None)):
                     result.offset = to_offset(result.inferred_freq)
             return result
 
@@ -1034,15 +1081,6 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
             return type(self)(start=left_start,
                               end=max(left_end, right_end),
                               freq=left.offset)
-
-    def __array_finalize__(self, obj):
-        if self.ndim == 0:  # pragma: no cover
-            return self.item()
-
-        self.offset = getattr(obj, 'offset', None)
-        self.tz = getattr(obj, 'tz', None)
-        self.name = getattr(obj, 'name', None)
-        self._reset_identity()
 
     def __iter__(self):
         """
@@ -1477,9 +1515,11 @@ class DatetimeIndex(DatelikeOps, DatetimeIndexOpsMixin, Int64Index):
         # sure we can't have ambiguous indexing
         return 'datetime64'
 
-    @property
+    @cache_readonly
     def dtype(self):
-        return _NS_DTYPE
+        if self.tz is None:
+            return _NS_DTYPE
+        return com.DatetimeTZDtype('ns',self.tz)
 
     @property
     def is_all_dates(self):

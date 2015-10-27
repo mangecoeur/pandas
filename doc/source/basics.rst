@@ -328,7 +328,7 @@ equality to be True:
    df1 = pd.DataFrame({'col':['foo', 0, np.nan]})
    df2 = pd.DataFrame({'col':[np.nan, 0, 'foo']}, index=[2,1,0])
    df1.equals(df2)
-   df1.equals(df2.sort())
+   df1.equals(df2.sort_index())
 
 Comparing array-like objects
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1090,7 +1090,7 @@ decreasing.
 
 Note that the same result could have been achieved using
 :ref:`fillna <missing_data.fillna>` (except for ``method='nearest'``) or
-:ref:`interpolate <missing_data.interpolation>`:
+:ref:`interpolate <missing_data.interpolate>`:
 
 .. ipython:: python
 
@@ -1489,7 +1489,7 @@ The ``by`` argument can take a list of column names, e.g.:
 
 .. ipython:: python
 
-   df1[['one', 'two', 'three']].sort_index(by=['one','two'])
+   df1[['one', 'two', 'three']].sort_values(by=['one','two'])
 
 These methods have special treatment of NA values via the ``na_position``
 argument:
@@ -1497,8 +1497,8 @@ argument:
 .. ipython:: python
 
    s[2] = np.nan
-   s.order()
-   s.order(na_position='first')
+   s.sort_values()
+   s.sort_values(na_position='first')
 
 
 .. _basics.searchsorted:
@@ -1564,7 +1564,7 @@ all levels to ``by``.
 .. ipython:: python
 
    df1.columns = pd.MultiIndex.from_tuples([('a','one'),('a','two'),('b','three')])
-   df1.sort_index(by=('a','two'))
+   df1.sort_values(by=('a','two'))
 
 
 Copying
@@ -1590,9 +1590,10 @@ dtypes
 ------
 
 The main types stored in pandas objects are ``float``, ``int``, ``bool``,
-``datetime64[ns]``, ``timedelta[ns]`` and ``object``. In addition these dtypes
-have item sizes, e.g. ``int64`` and ``int32``. A convenient :attr:`~DataFrame.dtypes``
-attribute for DataFrames returns a Series with the data type of each column.
+``datetime64[ns]`` and ``datetime64[ns, tz]`` (in >= 0.17.0), ``timedelta[ns]``, ``category`` (in >= 0.15.0), and ``object``. In addition these dtypes
+have item sizes, e.g. ``int64`` and ``int32``. See :ref:`Series with TZ <timeseries.timezone_series>` for more detail on ``datetime64[ns, tz]`` dtypes.
+
+A convenient :attr:`~DataFrame.dtypes` attribute for DataFrames returns a Series with the data type of each column.
 
 .. ipython:: python
 
@@ -1710,36 +1711,26 @@ then the more *general* one will be used as the result of the operation.
 object conversion
 ~~~~~~~~~~~~~~~~~
 
-.. note::
-
-    The syntax of :meth:`~DataFrame.convert_objects`  changed in 0.17.0. See
-    :ref:`API changes <whatsnew_0170.api_breaking.convert_objects>`
-    for more details.
-
-:meth:`~DataFrame.convert_objects` is a method that converts columns from
-the ``object`` dtype to datetimes, timedeltas or floats. For example, to
-attempt conversion of object data that are *number like*, e.g. could be a
-string that represents a number, pass ``numeric=True``. By default, this will
-attempt a soft conversion and so will only succeed if the entire column is
-convertible. To force the conversion, add the keyword argument ``coerce=True``.
-This will force strings and number-like objects to be numbers if
-possible, and other values will be set to ``np.nan``.
+:meth:`~DataFrame.convert_objects` is a method to try to force conversion of types from the ``object`` dtype to other types.
+To force conversion of specific types that are *number like*, e.g. could be a string that represents a number,
+pass ``convert_numeric=True``. This will force strings and numbers alike to be numbers if possible, otherwise
+they will be set to ``np.nan``.
 
 .. ipython:: python
 
    df3['D'] = '1.'
    df3['E'] = '1'
-   df3.convert_objects(numeric=True).dtypes
+   df3.convert_objects(convert_numeric=True).dtypes
 
    # same, but specific dtype conversion
    df3['D'] = df3['D'].astype('float16')
    df3['E'] = df3['E'].astype('int32')
    df3.dtypes
 
-To force conversion to ``datetime64[ns]``, pass ``datetime=True`` and ``coerce=True``.
+To force conversion to ``datetime64[ns]``, pass ``convert_dates='coerce'``.
 This will convert any datetime-like object to dates, forcing other values to ``NaT``.
 This might be useful if you are reading in data which is mostly dates,
-but occasionally contains non-dates that you wish to represent as missing.
+but occasionally has non-dates intermixed and you want to represent as missing.
 
 .. ipython:: python
 
@@ -1748,15 +1739,10 @@ but occasionally contains non-dates that you wish to represent as missing.
                  'foo', 1.0, 1, pd.Timestamp('20010104'),
                  '20010105'], dtype='O')
    s
-   s.convert_objects(datetime=True, coerce=True)
+   s.convert_objects(convert_dates='coerce')
 
-Without passing ``coerce=True``, :meth:`~DataFrame.convert_objects` will attempt
-*soft* conversion of any *object* dtypes, meaning that if all
+In addition, :meth:`~DataFrame.convert_objects` will attempt the *soft* conversion of any *object* dtypes, meaning that if all
 the objects in a Series are of the same type, the Series will have that dtype.
-Note that setting ``coerce=True`` does not *convert* arbitrary types to either
-``datetime64[ns]`` or ``timedelta64[ns]``. For example, a series containing string
-dates will not be converted to a series of datetimes. To convert between types,
-see :ref:`converting to timestamps <timeseries.converting>`.
 
 gotchas
 ~~~~~~~
@@ -1814,8 +1800,14 @@ dtypes:
    df['tdeltas'] = df.dates.diff()
    df['uint64'] = np.arange(3, 6).astype('u8')
    df['other_dates'] = pd.date_range('20130101', periods=3).values
+   df['tz_aware_dates'] = pd.date_range('20130101', periods=3, tz='US/Eastern')
    df
 
+And the dtypes
+
+.. ipython:: python
+
+   df.dtypes
 
 :meth:`~DataFrame.select_dtypes` has two parameters ``include`` and ``exclude`` that allow you to
 say "give me the columns WITH these dtypes" (``include``) and/or "give the
@@ -1868,7 +1860,7 @@ All numpy dtypes are subclasses of ``numpy.generic``:
 
 .. note::
 
-    Pandas also defines an additional ``category`` dtype, which is not integrated into the normal
+    Pandas also defines the types ``category``, and ``datetime64[ns, tz]``, which are not integrated into the normal
     numpy hierarchy and wont show up with the above function.
 
 .. note::

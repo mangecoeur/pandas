@@ -7,13 +7,13 @@ from datetime import datetime, timedelta
 
 from pandas import compat
 import numpy as np
-from pandas.core import common as com
+from pandas.core import common as com, algorithms
 from pandas.core.common import is_integer, is_float, AbstractMethodError
 import pandas.tslib as tslib
 import pandas.lib as lib
 from pandas.core.index import Index
 from pandas.util.decorators import Appender, cache_readonly
-from pandas.tseries.frequencies import infer_freq, to_offset, Resolution
+import pandas.tseries.frequencies as frequencies
 import pandas.algos as _algos
 
 
@@ -27,6 +27,8 @@ class DatelikeOps(object):
         supports the same string format as the python standard library. Details
         of the string format can be found in the `python string format doc
         <https://docs.python.org/2/library/datetime.html#strftime-and-strptime-behavior>`__
+
+        .. versionadded:: 0.17.0
 
         Parameters
         ----------
@@ -136,7 +138,7 @@ class DatetimeIndexOpsMixin(object):
         frequency.
         """
         try:
-            return infer_freq(self)
+            return frequencies.infer_freq(self)
         except ValueError:
             return None
 
@@ -178,7 +180,7 @@ class DatetimeIndexOpsMixin(object):
 
             return self._simple_new(sorted_values, **attribs)
 
-    def take(self, indices, axis=0):
+    def take(self, indices, axis=0, allow_fill=True, fill_value=None):
         """
         Analogous to ndarray.take
         """
@@ -187,6 +189,12 @@ class DatetimeIndexOpsMixin(object):
         if isinstance(maybe_slice, slice):
             return self[maybe_slice]
         taken = self.asi8.take(com._ensure_platform_int(indices))
+
+        # only fill if we are passing a non-None fill_value
+        if allow_fill and fill_value is not None:
+            mask = indices == -1
+            if mask.any():
+                taken[mask] = tslib.iNaT
         return self._shallow_copy(taken, freq=None)
 
     def get_duplicates(self):
@@ -260,7 +268,7 @@ class DatetimeIndexOpsMixin(object):
 
             if self.hasnans:
                 mask = i8 == tslib.iNaT
-                min_stamp = self[~mask].asi8.min()
+                min_stamp = i8[~mask].min()
             else:
                 min_stamp = i8.min()
             return self._box_func(min_stamp)
@@ -303,7 +311,7 @@ class DatetimeIndexOpsMixin(object):
 
             if self.hasnans:
                 mask = i8 == tslib.iNaT
-                max_stamp = self[~mask].asi8.max()
+                max_stamp = i8[~mask].max()
             else:
                 max_stamp = i8.max()
             return self._box_func(max_stamp)
@@ -343,24 +351,18 @@ class DatetimeIndexOpsMixin(object):
                 if freq is not None:
                     freq = "'%s'" % freq
                 attrs.append(('freq',freq))
-            elif attrib == 'tz':
-                tz = self.tz
-                if tz is not None:
-                    tz = "'%s'" % tz
-                attrs.append(('tz',tz))
         return attrs
 
     @cache_readonly
     def _resolution(self):
-        from pandas.tseries.frequencies import Resolution
-        return Resolution.get_reso_from_freq(self.freqstr)
+        return frequencies.Resolution.get_reso_from_freq(self.freqstr)
 
     @cache_readonly
     def resolution(self):
         """
         Returns day, hour, minute, second, millisecond or microsecond
         """
-        return Resolution.get_str(self._resolution)
+        return frequencies.Resolution.get_str(self._resolution)
 
     def _convert_scalar_indexer(self, key, kind=None):
         """
@@ -399,7 +401,7 @@ class DatetimeIndexOpsMixin(object):
                 raise TypeError("cannot add TimedeltaIndex and {typ}".format(typ=type(other)))
             elif isinstance(other, Index):
                 warnings.warn("using '+' to provide set union with datetimelike Indexes is deprecated, "
-                              "use .union()",FutureWarning)
+                              "use .union()",FutureWarning, stacklevel=2)
                 return self.union(other)
             elif isinstance(other, (DateOffset, timedelta, np.timedelta64, tslib.Timedelta)):
                 return self._add_delta(other)
@@ -424,7 +426,7 @@ class DatetimeIndexOpsMixin(object):
                 return self._add_delta(-other)
             elif isinstance(other, Index):
                 warnings.warn("using '-' to provide set differences with datetimelike Indexes is deprecated, "
-                              "use .difference()",FutureWarning)
+                              "use .difference()",FutureWarning, stacklevel=2)
                 return self.difference(other)
             elif isinstance(other, (DateOffset, timedelta, np.timedelta64, tslib.Timedelta)):
                 return self._add_delta(-other)
@@ -452,9 +454,9 @@ class DatetimeIndexOpsMixin(object):
 
         inc = tslib._delta_to_nanoseconds(other)
         mask = self.asi8 == tslib.iNaT
-        new_values = (self.asi8 + inc).view(self.dtype)
+        new_values = (self.asi8 + inc).view('i8')
         new_values[mask] = tslib.iNaT
-        return new_values.view(self.dtype)
+        return new_values.view('i8')
 
     def _add_delta_tdi(self, other):
         # add a delta of a TimedeltaIndex
@@ -490,8 +492,7 @@ class DatetimeIndexOpsMixin(object):
             except ValueError:
                 return self.asobject.isin(values)
 
-        value_set = set(values.asi8)
-        return lib.ismember_int64(self.asi8, value_set)
+        return algorithms.isin(self.asi8, values.asi8)
 
     def shift(self, n, freq=None):
         """
@@ -509,7 +510,7 @@ class DatetimeIndexOpsMixin(object):
         """
         if freq is not None and freq != self.freq:
             if isinstance(freq, compat.string_types):
-                freq = to_offset(freq)
+                freq = frequencies.to_offset(freq)
             result = Index.shift(self, n, freq)
 
             if hasattr(self,'tz'):
@@ -548,8 +549,7 @@ class DatetimeIndexOpsMixin(object):
         """
         Analogous to ndarray.repeat
         """
-        return self._simple_new(self.values.repeat(repeats),
-                                name=self.name)
+        return self._shallow_copy(self.values.repeat(repeats), freq=None)
 
     def summary(self, name=None):
         """

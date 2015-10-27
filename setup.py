@@ -181,6 +181,7 @@ CLASSIFIERS = [
     'Programming Language :: Python :: 2.7',
     'Programming Language :: Python :: 3.3',
     'Programming Language :: Python :: 3.4',
+    'Programming Language :: Python :: 3.5',
     'Programming Language :: Cython',
     'Topic :: Scientific/Engineering',
 ]
@@ -473,8 +474,6 @@ unpacker_ext = Extension('pandas.msgpack._unpacker',
                         define_macros=macros)
 extensions.append(packer_ext)
 extensions.append(unpacker_ext)
-# if not ISRELEASED:
-#     extensions.extend([sandbox_ext])
 
 if suffix == '.pyx' and 'setuptools' in sys.modules:
     # undo dumb setuptools bug clobbering .pyx sources back to .c

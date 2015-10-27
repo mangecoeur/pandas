@@ -51,7 +51,7 @@ _version = '0.15.2'
 _default_encoding = 'UTF-8'
 
 def _ensure_decoded(s):
-    """ if we have bytes, decode them to unicde """
+    """ if we have bytes, decode them to unicode """
     if isinstance(s, np.bytes_):
         s = s.decode('UTF-8')
     return s
@@ -1596,7 +1596,7 @@ class IndexCol(StringMixin):
                 # frequency/name just warn
                 if key in ['freq', 'index_name']:
                     ws = attribute_conflict_doc % (key, existing_value, value)
-                    warnings.warn(ws, AttributeConflictWarning)
+                    warnings.warn(ws, AttributeConflictWarning, stacklevel=6)
 
                     # reset
                     idx[key] = None
@@ -1790,6 +1790,8 @@ class DataCol(IndexCol):
         # short-cut certain block types
         if block.is_categorical:
             return self.set_atom_categorical(block, items=block_items, info=info)
+        elif block.is_datetimetz:
+            return self.set_atom_datetime64tz(block, info=info)
         elif block.is_datetime:
             return self.set_atom_datetime64(block)
         elif block.is_timedelta:
@@ -1804,50 +1806,14 @@ class DataCol(IndexCol):
             raise TypeError(
                 "[date] is not implemented as a table column")
         elif inferred_type == 'datetime':
-            rvalues = block.values.ravel()
-            if getattr(rvalues[0], 'tzinfo', None) is not None:
+            # after 8260
+            # this only would be hit for a mutli-timezone dtype
+            # which is an error
 
-                # if this block has more than one timezone, raise
-                try:
-                    # pytz timezones: compare on zone name (to avoid issues with DST being a different zone to STD).
-                    zones = [r.tzinfo.zone for r in rvalues]
-                except:
-                    # dateutil timezones: compare on ==
-                    zones = [r.tzinfo for r in rvalues]
-                    if any(zones[0] != zone_i for zone_i in zones[1:]):
-                        raise TypeError(
-                            "too many timezones in this block, create separate "
-                            "data columns"
-                        )
-                else:
-                    if len(set(zones)) != 1:
-                        raise TypeError(
-                            "too many timezones in this block, create separate "
-                            "data columns"
-                        )
-
-                # convert this column to datetime64[ns] utc, and save the tz
-                index = DatetimeIndex(rvalues)
-                tz = getattr(index, 'tz', None)
-                if tz is None:
-                    raise TypeError(
-                        "invalid timezone specification")
-
-                values = index.tz_convert('UTC').values.view('i8')
-
-                # store a converted timezone
-                zone = tslib.get_timezone(index.tz)
-                if zone is None:
-                    zone = tslib.tot_seconds(index.tz.utcoffset())
-                self.tz = zone
-
-                self.update_info(info)
-                self.set_atom_datetime64(
-                    block, values.reshape(block.values.shape))
-
-            else:
-                raise TypeError(
-                    "[datetime] is not implemented as a table column")
+            raise TypeError(
+                "too many timezones in this block, create separate "
+                "data columns"
+                )
         elif inferred_type == 'unicode':
             raise TypeError(
                 "[unicode] is not implemented as a table column")
@@ -1873,7 +1839,9 @@ class DataCol(IndexCol):
                         nan_rep, encoding):
         # fill nan items with myself, don't disturb the blocks by
         # trying to downcast
-        block = block.fillna(nan_rep, downcast=False)[0]
+        block = block.fillna(nan_rep, downcast=False)
+        if isinstance(block, list):
+            block = block[0]
         data = block.values
 
         # see if we have a valid string type
@@ -1894,7 +1862,8 @@ class DataCol(IndexCol):
                     )
 
         # itemsize is the maximum length of a string (along any dimension)
-        itemsize = lib.max_len_string_array(com._ensure_object(data.ravel()))
+        data_converted = _convert_string_array(data, encoding)
+        itemsize = data_converted.itemsize
 
         # specified min_itemsize?
         if isinstance(min_itemsize, dict):
@@ -1911,10 +1880,7 @@ class DataCol(IndexCol):
         self.itemsize = itemsize
         self.kind = 'string'
         self.typ = self.get_atom_string(block, itemsize)
-        self.set_data(self.convert_string_data(data, itemsize, encoding))
-
-    def convert_string_data(self, data, itemsize, encoding):
-        return _convert_string_array(data, encoding, itemsize)
+        self.set_data(data_converted.astype('|S%d' % itemsize, copy=False))
 
     def get_atom_coltype(self, kind=None):
         """ return the PyTables column class for this column """
@@ -1974,6 +1940,25 @@ class DataCol(IndexCol):
         self.typ = self.get_atom_datetime64(block)
         if values is None:
             values = block.values.view('i8')
+        self.set_data(values, 'datetime64')
+
+    def set_atom_datetime64tz(self, block, info, values=None):
+
+        if values is None:
+            values = block.values
+
+        # convert this column to datetime64[ns] utc, and save the tz
+        values = values.tz_convert('UTC').values.view('i8').reshape(block.shape)
+
+        # store a converted timezone
+        zone = tslib.get_timezone(block.values.tz)
+        if zone is None:
+            zone = tslib.tot_seconds(block.values.tz.utcoffset())
+        self.tz = zone
+        self.update_info(info)
+
+        self.kind = 'datetime64'
+        self.typ = self.get_atom_datetime64(block)
         self.set_data(values, 'datetime64')
 
     def get_atom_timedelta64(self, block):
@@ -2037,9 +2022,8 @@ class DataCol(IndexCol):
                     # we stored as utc, so just set the tz
 
                     index = DatetimeIndex(
-                        self.data.ravel(), tz='UTC').tz_convert(self.tz)
-                    self.data = np.asarray(
-                        index.tolist(), dtype=object).reshape(self.data.shape)
+                        self.data.ravel(), tz='UTC').tz_convert(tslib.maybe_get_tz(self.tz))
+                    self.data = index
 
                 else:
                     self.data = np.asarray(self.data, dtype='M8[ns]')
@@ -2581,7 +2565,7 @@ class GenericFixed(Fixed):
                 except:
                     pass
                 ws = performance_doc % (inferred_type, key, items)
-                warnings.warn(ws, PerformanceWarning)
+                warnings.warn(ws, PerformanceWarning, stacklevel=7)
 
             vlarr = self._handle.create_vlarray(self.group, key,
                                                _tables().ObjectAtom())
@@ -3716,7 +3700,7 @@ class LegacyTable(Table):
                 objs.append(obj)
 
         else:
-            warnings.warn(duplicate_doc, DuplicateWarning)
+            warnings.warn(duplicate_doc, DuplicateWarning, stacklevel=5)
 
             # reconstruct
             long_index = MultiIndex.from_arrays(
@@ -4048,7 +4032,7 @@ class AppendableFrameTable(AppendableTable):
                 cols_ = cols
 
             # if we have a DataIndexableCol, its shape will only be 1 dim
-            if values.ndim == 1:
+            if values.ndim == 1 and isinstance(values, np.ndarray):
                 values = values.reshape((1, values.shape[0]))
 
             block = make_block(values, placement=np.arange(len(cols_)))

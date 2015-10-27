@@ -23,13 +23,15 @@ from numpy.random import randn, rand
 import numpy as np
 
 import pandas as pd
-from pandas.core.common import (is_sequence, array_equivalent, is_list_like,
+from pandas.core.common import (is_sequence, array_equivalent, is_list_like, is_number,
                                 is_datetimelike_v_numeric, is_datetimelike_v_object,
-                                is_number, pprint_thing, take_1d)
+                                is_number, pprint_thing, take_1d,
+                                needs_i8_conversion)
+
 import pandas.compat as compat
 from pandas.compat import(
     filter, map, zip, range, unichr, lrange, lmap, lzip, u, callable, Counter,
-    raise_with_traceback, httplib, is_platform_windows
+    raise_with_traceback, httplib, is_platform_windows, is_platform_32bit
 )
 
 from pandas.computation import expressions as expr
@@ -56,7 +58,6 @@ def reset_testing_mode():
     testing_mode = os.environ.get('PANDAS_TESTING_MODE','None')
     if 'deprecate' in testing_mode:
         warnings.simplefilter('ignore', DeprecationWarning)
-
 
 set_testing_mode()
 
@@ -174,8 +175,7 @@ def close(fignum=None):
 
 def _skip_if_32bit():
     import nose
-    import struct
-    if struct.calcsize("P") * 8 < 64:
+    if is_platform_32bit():
         raise nose.SkipTest("skipping for 32 bit")
 
 def mplskip(cls):
@@ -192,6 +192,14 @@ def mplskip(cls):
 
     cls.setUpClass = setUpClass
     return cls
+
+
+def _skip_if_mpl_1_5():
+    import matplotlib
+    v = matplotlib.__version__
+    if v > LooseVersion('1.4.3') or v[0] == '0':
+        import nose
+        raise nose.SkipTest("matplotlib 1.5")
 
 
 def _skip_if_no_scipy():
@@ -245,6 +253,55 @@ def _skip_if_python26():
     if sys.version_info[:2] == (2, 6):
         import nose
         raise nose.SkipTest("skipping on python2.6")
+
+
+def _skip_if_no_pathlib():
+    try:
+        from pathlib import Path
+    except ImportError:
+        import nose
+        raise nose.SkipTest("pathlib not available")
+
+
+def _skip_if_no_localpath():
+    try:
+        from py.path import local as LocalPath
+    except ImportError:
+        import nose
+        raise nose.SkipTest("py.path not installed")
+
+
+def _incompat_bottleneck_version(method):
+    """ skip if we have bottleneck installed
+    and its >= 1.0
+    as we don't match the nansum/nanprod behavior for all-nan
+    ops, see GH9422
+    """
+    if method not in ['sum','prod']:
+        return False
+    try:
+        import bottleneck as bn
+        return bn.__version__ >= LooseVersion('1.0')
+    except ImportError:
+        return False
+
+def skip_if_no_ne(engine='numexpr'):
+    import nose
+    _USE_NUMEXPR = pd.computation.expressions._USE_NUMEXPR
+
+    if engine == 'numexpr':
+        try:
+            import numexpr as ne
+        except ImportError:
+            raise nose.SkipTest("numexpr not installed")
+
+        if not _USE_NUMEXPR:
+            raise nose.SkipTest("numexpr disabled")
+
+        if ne.__version__ < LooseVersion('2.0'):
+            raise nose.SkipTest("numexpr version too low: "
+                                "%s" % ne.__version__)
+
 
 
 #------------------------------------------------------------------------------
@@ -870,7 +927,7 @@ def assert_series_equal(left, right, check_dtype=True,
     elif check_datetimelike_compat:
         # we want to check only if we have compat dtypes
         # e.g. integer and M|m are NOT compat, but we can simply check the values in that case
-        if is_datetimelike_v_numeric(left, right) or is_datetimelike_v_object(left, right):
+        if is_datetimelike_v_numeric(left, right) or is_datetimelike_v_object(left, right) or needs_i8_conversion(left) or needs_i8_conversion(right):
 
             # datetimelike may have different objects (e.g. datetime.datetime vs Timestamp) but will compare equal
             if not Index(left.values).equals(Index(right.values)):
@@ -1566,7 +1623,8 @@ _network_error_messages = (
     'HTTP Error 403',
     'Temporary failure in name resolution',
     'Name or service not known',
-    )
+    'Connection refused',
+)
 
 # or this e.errno/e.reason.errno
 _network_errno_vals = (
@@ -1916,9 +1974,9 @@ class _AssertRaisesContextmanager(object):
                 raise_with_traceback(e, traceback)
         return True
 
-
 @contextmanager
-def assert_produces_warning(expected_warning=Warning, filter_level="always", clear=None):
+def assert_produces_warning(expected_warning=Warning, filter_level="always",
+                            clear=None, check_stacklevel=True):
     """
     Context manager for running code that expects to raise (or not raise)
     warnings.  Checks that code raises the expected warning and only the
@@ -1962,10 +2020,21 @@ def assert_produces_warning(expected_warning=Warning, filter_level="always", cle
         warnings.simplefilter(filter_level)
         yield w
         extra_warnings = []
+
         for actual_warning in w:
             if (expected_warning and issubclass(actual_warning.category,
                                                 expected_warning)):
                 saw_warning = True
+
+                if check_stacklevel and issubclass(actual_warning.category,
+                                                   (FutureWarning, DeprecationWarning)):
+                    from inspect import getframeinfo, stack
+                    caller = getframeinfo(stack()[2][0])
+                    msg = ("Warning not set with correct stacklevel. File were warning"
+                           " is raised: {0} != {1}. Warning message: {2}".format(
+                               actual_warning.filename, caller.filename,
+                               actual_warning.message))
+                    assert actual_warning.filename == caller.filename, msg
             else:
                 extra_warnings.append(actual_warning.category.__name__)
         if expected_warning:
@@ -1973,24 +2042,6 @@ def assert_produces_warning(expected_warning=Warning, filter_level="always", cle
                                  % expected_warning.__name__)
         assert not extra_warnings, ("Caused unexpected warning(s): %r."
                                     % extra_warnings)
-
-
-def skip_if_no_ne(engine='numexpr'):
-    import nose
-    _USE_NUMEXPR = pd.computation.expressions._USE_NUMEXPR
-
-    if engine == 'numexpr':
-        try:
-            import numexpr as ne
-        except ImportError:
-            raise nose.SkipTest("numexpr not installed")
-
-        if not _USE_NUMEXPR:
-            raise nose.SkipTest("numexpr disabled")
-
-        if ne.__version__ < LooseVersion('2.0'):
-            raise nose.SkipTest("numexpr version too low: "
-                                "%s" % ne.__version__)
 
 
 def disabled(t):
@@ -2044,14 +2095,16 @@ for name, obj in inspect.getmembers(sys.modules[__name__]):
     if inspect.isfunction(obj) and name.startswith('assert'):
         setattr(TestCase, name, staticmethod(obj))
 
-def test_parallel(num_threads=2):
+
+def test_parallel(num_threads=2, kwargs_list=None):
     """Decorator to run the same function multiple times in parallel.
 
     Parameters
     ----------
     num_threads : int, optional
         The number of times the function is run in parallel.
-
+    kwargs_list : list of dicts, optional
+        The list of kwargs to update original function kwargs on different threads.
     Notes
     -----
     This decorator does not pass the return value of the decorated function.
@@ -2061,14 +2114,23 @@ def test_parallel(num_threads=2):
     """
 
     assert num_threads > 0
+    has_kwargs_list = kwargs_list is not None
+    if has_kwargs_list:
+        assert len(kwargs_list) == num_threads
     import threading
 
     def wrapper(func):
         @wraps(func)
         def inner(*args, **kwargs):
+            if has_kwargs_list:
+                update_kwargs = lambda i: dict(kwargs, **kwargs_list[i])
+            else:
+                update_kwargs = lambda i: kwargs
             threads = []
             for i in range(num_threads):
-                thread = threading.Thread(target=func, args=args, kwargs=kwargs)
+                updated_kwargs = update_kwargs(i)
+                thread = threading.Thread(target=func, args=args,
+                                          kwargs=updated_kwargs)
                 threads.append(thread)
             for thread in threads:
                 thread.start()

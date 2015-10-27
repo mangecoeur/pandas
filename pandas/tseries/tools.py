@@ -8,6 +8,7 @@ import pandas.lib as lib
 import pandas.tslib as tslib
 import pandas.core.common as com
 from pandas.compat import StringIO, callable
+from pandas.core.common import ABCIndexClass
 import pandas.compat as compat
 from pandas.util.decorators import deprecate_kwarg
 
@@ -85,20 +86,21 @@ def _guess_datetime_format(dt_str, dayfirst=False,
     if not isinstance(dt_str, compat.string_types):
         return None
 
-    day_attribute_and_format = (('day',), '%d')
+    day_attribute_and_format = (('day',), '%d', 2)
 
+    # attr name, format, padding (if any)
     datetime_attrs_to_format = [
-        (('year', 'month', 'day'), '%Y%m%d'),
-        (('year',), '%Y'),
-        (('month',), '%B'),
-        (('month',), '%b'),
-        (('month',), '%m'),
+        (('year', 'month', 'day'), '%Y%m%d', 0),
+        (('year',), '%Y', 0),
+        (('month',), '%B', 0),
+        (('month',), '%b', 0),
+        (('month',), '%m', 2),
         day_attribute_and_format,
-        (('hour',), '%H'),
-        (('minute',), '%M'),
-        (('second',), '%S'),
-        (('microsecond',), '%f'),
-        (('second', 'microsecond'), '%S.%f'),
+        (('hour',), '%H', 2),
+        (('minute',), '%M', 2),
+        (('second',), '%S', 2),
+        (('microsecond',), '%f', 6),
+        (('second', 'microsecond'), '%S.%f', 0),
     ]
 
     if dayfirst:
@@ -124,7 +126,7 @@ def _guess_datetime_format(dt_str, dayfirst=False,
     format_guess = [None] * len(tokens)
     found_attrs = set()
 
-    for attrs, attr_format in datetime_attrs_to_format:
+    for attrs, attr_format, padding in datetime_attrs_to_format:
         # If a given attribute has been placed in the format string, skip
         # over other formats for that same underlying attribute (IE, month
         # can be represented in multiple different ways)
@@ -133,9 +135,11 @@ def _guess_datetime_format(dt_str, dayfirst=False,
 
         if all(getattr(parsed_datetime, attr) is not None for attr in attrs):
             for i, token_format in enumerate(format_guess):
+                token_filled = tokens[i].zfill(padding)
                 if (token_format is None and
-                        tokens[i] == parsed_datetime.strftime(attr_format)):
+                        token_filled == parsed_datetime.strftime(attr_format)):
                     format_guess[i] = attr_format
+                    tokens[i] = token_filled
                     found_attrs.update(attrs)
                     break
 
@@ -162,6 +166,8 @@ def _guess_datetime_format(dt_str, dayfirst=False,
 
     guessed_format = ''.join(output_format)
 
+    # rebuild string, capturing any inferred padding
+    dt_str = ''.join(tokens)
     if parsed_datetime.strftime(guessed_format) == dt_str:
         return guessed_format
 
@@ -198,6 +204,9 @@ def to_datetime(arg, errors='raise', dayfirst=False, yearfirst=False,
         - If both dayfirst and yearfirst are True, yearfirst is preceded (same as dateutil).
         Warning: yearfirst=True is not strict, but will prefer to parse
         with year first (this is a known bug, based on dateutil beahavior).
+
+        .. versionadded: 0.16.1
+
     utc : boolean, default None
         Return UTC DatetimeIndex if True (converting any tz-aware
         datetime.datetime objects as well).
@@ -277,7 +286,7 @@ def _to_datetime(arg, errors='raise', dayfirst=False, yearfirst=False,
     from pandas.core.series import Series
     from pandas.tseries.index import DatetimeIndex
 
-    def _convert_listlike(arg, box, format):
+    def _convert_listlike(arg, box, format, name=None):
 
         if isinstance(arg, (list,tuple)):
             arg = np.array(arg, dtype='O')
@@ -286,15 +295,23 @@ def _to_datetime(arg, errors='raise', dayfirst=False, yearfirst=False,
         if com.is_datetime64_ns_dtype(arg):
             if box and not isinstance(arg, DatetimeIndex):
                 try:
-                    return DatetimeIndex(arg, tz='utc' if utc else None)
+                    return DatetimeIndex(arg, tz='utc' if utc else None, name=name)
                 except ValueError:
                     pass
 
             return arg
+
+        elif com.is_datetime64tz_dtype(arg):
+            if not isinstance(arg, DatetimeIndex):
+                return DatetimeIndex(arg, tz='utc' if utc else None)
+            if utc:
+                arg = arg.tz_convert(None)
+            return arg
+
         elif format is None and com.is_integer_dtype(arg) and unit=='ns':
             result = arg.astype('datetime64[ns]')
             if box:
-                return DatetimeIndex(result, tz='utc' if utc else None)
+                return DatetimeIndex(result, tz='utc' if utc else None, name=name)
 
             return result
 
@@ -355,13 +372,13 @@ def _to_datetime(arg, errors='raise', dayfirst=False, yearfirst=False,
                                                  require_iso8601=require_iso8601)
 
             if com.is_datetime64_dtype(result) and box:
-                result = DatetimeIndex(result, tz='utc' if utc else None)
+                result = DatetimeIndex(result, tz='utc' if utc else None, name=name)
             return result
 
         except ValueError as e:
             try:
                 values, tz = tslib.datetime_to_datetime64(arg)
-                return DatetimeIndex._simple_new(values, None, tz=tz)
+                return DatetimeIndex._simple_new(values, name=name, tz=tz)
             except (ValueError, TypeError):
                 raise e
 
@@ -370,8 +387,10 @@ def _to_datetime(arg, errors='raise', dayfirst=False, yearfirst=False,
     elif isinstance(arg, tslib.Timestamp):
         return arg
     elif isinstance(arg, Series):
-        values = _convert_listlike(arg.values, False, format)
+        values = _convert_listlike(arg._values, False, format)
         return Series(values, index=arg.index, name=arg.name)
+    elif isinstance(arg, ABCIndexClass):
+        return _convert_listlike(arg, box, format, name=arg.name)
     elif com.is_list_like(arg):
         return _convert_listlike(arg, box, format)
 
@@ -445,6 +464,10 @@ def parse_time_string(arg, freq=None, dayfirst=None, yearfirst=None):
     from pandas.core.config import get_option
     if not isinstance(arg, compat.string_types):
         return arg
+
+    from pandas.tseries.offsets import DateOffset
+    if isinstance(freq, DateOffset):
+        freq = freq.rule_code
 
     if dayfirst is None:
         dayfirst = get_option("display.date_dayfirst")

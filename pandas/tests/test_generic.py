@@ -39,8 +39,7 @@ class Generic(object):
     _multiprocess_can_split_ = True
 
     def setUp(self):
-        import warnings
-        warnings.filterwarnings(action='ignore', category=FutureWarning)
+        pass
 
     @property
     def _ndim(self):
@@ -857,8 +856,95 @@ class TestSeries(tm.TestCase, Generic):
 
     def test_interp_limit(self):
         s = Series([1, 3, np.nan, np.nan, np.nan, 11])
+
         expected = Series([1., 3., 5., 7., np.nan, 11.])
         result = s.interpolate(method='linear', limit=2)
+        assert_series_equal(result, expected)
+
+    def test_interp_limit_forward(self):
+        s = Series([1, 3, np.nan, np.nan, np.nan, 11])
+
+        # Provide 'forward' (the default) explicitly here.
+        expected = Series([1., 3., 5., 7., np.nan, 11.])
+
+        result = s.interpolate(
+            method='linear', limit=2, limit_direction='forward')
+        assert_series_equal(result, expected)
+
+        result = s.interpolate(
+            method='linear', limit=2, limit_direction='FORWARD')
+        assert_series_equal(result, expected)
+
+    def test_interp_limit_bad_direction(self):
+        s = Series([1, 3, np.nan, np.nan, np.nan, 11])
+
+        self.assertRaises(ValueError, s.interpolate,
+                          method='linear', limit=2,
+                          limit_direction='abc')
+
+        # raises an error even if no limit is specified.
+        self.assertRaises(ValueError, s.interpolate,
+                          method='linear',
+                          limit_direction='abc')
+
+    def test_interp_limit_direction(self):
+        # These tests are for issue #9218 -- fill NaNs in both directions.
+        s = Series([1, 3, np.nan, np.nan, np.nan, 11])
+
+        expected = Series([1., 3., np.nan, 7., 9., 11.])
+        result = s.interpolate(
+            method='linear', limit=2, limit_direction='backward')
+        assert_series_equal(result, expected)
+
+        expected = Series([1., 3., 5., np.nan, 9., 11.])
+        result = s.interpolate(
+            method='linear', limit=1, limit_direction='both')
+        assert_series_equal(result, expected)
+
+        # Check that this works on a longer series of nans.
+        s = Series([1, 3, np.nan, np.nan, np.nan, 7, 9, np.nan, np.nan, 12, np.nan])
+
+        expected = Series([1., 3., 4., 5., 6., 7., 9., 10., 11., 12., 12.])
+        result = s.interpolate(
+            method='linear', limit=2, limit_direction='both')
+        assert_series_equal(result, expected)
+
+        expected = Series([1., 3., 4., np.nan, 6., 7., 9., 10., 11., 12., 12.])
+        result = s.interpolate(
+            method='linear', limit=1, limit_direction='both')
+        assert_series_equal(result, expected)
+
+    def test_interp_limit_to_ends(self):
+        # These test are for issue #10420 -- flow back to beginning.
+        s = Series([np.nan, np.nan, 5, 7, 9, np.nan])
+
+        expected = Series([5., 5., 5., 7., 9., np.nan])
+        result = s.interpolate(
+            method='linear', limit=2, limit_direction='backward')
+        assert_series_equal(result, expected)
+
+        expected = Series([5., 5., 5., 7., 9., 9.])
+        result = s.interpolate(
+            method='linear', limit=2, limit_direction='both')
+        assert_series_equal(result, expected)
+
+    def test_interp_limit_before_ends(self):
+        # These test are for issue #11115 -- limit ends properly.
+        s = Series([np.nan, np.nan, 5, 7, np.nan, np.nan])
+
+        expected = Series([np.nan, np.nan, 5., 7., 7., np.nan])
+        result = s.interpolate(
+            method='linear', limit=1, limit_direction='forward')
+        assert_series_equal(result, expected)
+
+        expected = Series([np.nan, 5., 5., 7., np.nan, np.nan])
+        result = s.interpolate(
+            method='linear', limit=1, limit_direction='backward')
+        assert_series_equal(result, expected)
+
+        expected = Series([np.nan, 5., 5., 7., 7., np.nan])
+        result = s.interpolate(
+            method='linear', limit=1, limit_direction='both')
         assert_series_equal(result, expected)
 
     def test_interp_all_good(self):
@@ -1629,6 +1715,15 @@ class TestNDFrame(tm.TestCase):
 
         p4d = tm.makePanel4D().reindex(labels=['label1'],items=['ItemA'])
         tm.assert_frame_equal(p4d.squeeze(),p4d.ix['label1','ItemA'])
+
+        # don't fail with 0 length dimensions GH11229 & GH8999
+        empty_series=pd.Series([], name='five')
+        empty_frame=pd.DataFrame([empty_series])
+        empty_panel=pd.Panel({'six':empty_frame})
+
+        [tm.assert_series_equal(empty_series, higher_dim.squeeze())
+         for higher_dim in [empty_series, empty_frame, empty_panel]]
+
 
     def test_equals(self):
         s1 = pd.Series([1, 2, 3], index=[0, 2, 1])

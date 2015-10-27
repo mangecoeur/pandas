@@ -12,13 +12,14 @@ from pandas.core.base import PandasObject, PandasDelegate
 import pandas.core.common as com
 from pandas.util.decorators import cache_readonly, deprecate_kwarg
 
-from pandas.core.common import (CategoricalDtype, ABCSeries, ABCIndexClass, ABCCategoricalIndex,
+from pandas.core.common import (ABCSeries, ABCIndexClass, ABCPeriodIndex, ABCCategoricalIndex,
                                 isnull, notnull, is_dtype_equal,
                                 is_categorical_dtype, is_integer_dtype, is_object_dtype,
                                 _possibly_infer_to_datetimelike, get_dtype_kinds,
                                 is_list_like, is_sequence, is_null_slice, is_bool,
                                 _ensure_platform_int, _ensure_object, _ensure_int64,
                                 _coerce_indexer_dtype, take_1d)
+from pandas.core.dtypes import CategoricalDtype
 from pandas.util.terminal import get_terminal_size
 from pandas.core.config import get_option
 
@@ -85,7 +86,7 @@ def _cat_compare_op(op):
 def maybe_to_categorical(array):
     """ coerce to a categorical if a series is given """
     if isinstance(array, (ABCSeries, ABCCategoricalIndex)):
-        return array.values
+        return array._values
     return array
 
 _codes_doc = """The category codes of this categorical.
@@ -207,7 +208,7 @@ class Categorical(PandasObject):
         if fastpath:
             # fast path
             self._codes = _coerce_indexer_dtype(values, categories)
-            self.categories = categories
+            self._categories = self._validate_categories(categories, fastpath=isinstance(categories, ABCIndexClass))
             self._ordered = ordered
             return
 
@@ -231,7 +232,7 @@ class Categorical(PandasObject):
 
             # we are either a Series or a CategoricalIndex
             if isinstance(values, (ABCSeries, ABCCategoricalIndex)):
-                values = values.values
+                values = values._values
 
             if ordered is None:
                 ordered = values.ordered
@@ -274,6 +275,8 @@ class Categorical(PandasObject):
                 ### FIXME ####
                 raise NotImplementedError("> 1 ndim Categorical are not supported at this time")
 
+            categories = self._validate_categories(categories)
+
         else:
             # there were two ways if categories are present
             # - the old one, where each value is a int pointer to the levels array -> not anymore
@@ -282,7 +285,6 @@ class Categorical(PandasObject):
 
             # make sure that we always have the same type here, no matter what we get passed in
             categories = self._validate_categories(categories)
-
             codes = _get_codes_for_values(values, categories)
 
             # TODO: check for old style usage. These warnings should be removes after 0.18/ in 2016
@@ -295,7 +297,7 @@ class Categorical(PandasObject):
                      "'Categorical.from_codes(codes, categories)'?", RuntimeWarning, stacklevel=2)
 
         self.set_ordered(ordered or False, inplace=True)
-        self.categories = categories
+        self._categories = categories
         self._codes = _coerce_indexer_dtype(codes, categories)
 
     def copy(self):
@@ -413,7 +415,7 @@ class Categorical(PandasObject):
 
         Deprecated, use .codes!
         """
-        warn("'labels' is deprecated. Use 'codes' instead", FutureWarning, stacklevel=3)
+        warn("'labels' is deprecated. Use 'codes' instead", FutureWarning, stacklevel=2)
         return self.codes
 
     labels = property(fget=_get_labels, fset=_set_codes)
@@ -421,9 +423,15 @@ class Categorical(PandasObject):
     _categories = None
 
     @classmethod
-    def _validate_categories(cls, categories):
+    def _validate_categories(cls, categories, fastpath=False):
         """
         Validates that we have good categories
+
+        Parameters
+        ----------
+        fastpath : boolean (default: False)
+           Don't perform validation of the categories for uniqueness or nulls
+
         """
         if not isinstance(categories, ABCIndexClass):
             dtype = None
@@ -439,16 +447,40 @@ class Categorical(PandasObject):
 
             from pandas import Index
             categories = Index(categories, dtype=dtype)
-        if not categories.is_unique:
-            raise ValueError('Categorical categories must be unique')
+
+        if not fastpath:
+
+            # check properties of the categories
+            # we don't allow NaNs in the categories themselves
+
+            if categories.hasnans:
+                # NaNs in cats deprecated in 0.17, remove in 0.18 or 0.19 GH 10748
+                msg = ('\nSetting NaNs in `categories` is deprecated and '
+                       'will be removed in a future version of pandas.')
+                warn(msg, FutureWarning, stacklevel=3)
+
+            # categories must be unique
+
+            if not categories.is_unique:
+                raise ValueError('Categorical categories must be unique')
+
         return categories
 
-    def _set_categories(self, categories):
-        """ Sets new categories """
-        categories = self._validate_categories(categories)
-        if not self._categories is None and len(categories) != len(self._categories):
+    def _set_categories(self, categories, fastpath=False):
+        """ Sets new categories
+
+        Parameters
+        ----------
+        fastpath : boolean (default: False)
+           Don't perform validation of the categories for uniqueness or nulls
+
+        """
+
+        categories = self._validate_categories(categories, fastpath=fastpath)
+        if not fastpath and not self._categories is None and len(categories) != len(self._categories):
             raise ValueError("new categories need to have the same number of items than the old "
                              "categories!")
+
         self._categories = categories
 
     def _get_categories(self):
@@ -460,12 +492,12 @@ class Categorical(PandasObject):
 
     def _set_levels(self, levels):
         """ set new levels (deprecated, use "categories") """
-        warn("Assigning to 'levels' is deprecated, use 'categories'", FutureWarning, stacklevel=3)
+        warn("Assigning to 'levels' is deprecated, use 'categories'", FutureWarning, stacklevel=2)
         self.categories = levels
 
     def _get_levels(self):
         """ Gets the levels (deprecated, use "categories") """
-        warn("Accessing 'levels' is deprecated, use 'categories'", FutureWarning, stacklevel=3)
+        warn("Accessing 'levels' is deprecated, use 'categories'", FutureWarning, stacklevel=2)
         return self.categories
 
     # TODO: Remove after deprecation period in 2017/ after 0.18
@@ -476,7 +508,7 @@ class Categorical(PandasObject):
     def _set_ordered(self, value):
         """ Sets the ordered attribute to the boolean value """
         warn("Setting 'ordered' directly is deprecated, use 'set_ordered'", FutureWarning,
-             stacklevel=3)
+             stacklevel=2)
         self.set_ordered(value, inplace=True)
 
     def set_ordered(self, value, inplace=False):
@@ -581,11 +613,10 @@ class Categorical(PandasObject):
             if not cat._categories is None and len(new_categories) < len(cat._categories):
                 # remove all _codes which are larger and set to -1/NaN
                 self._codes[self._codes >= len(new_categories)] = -1
-            cat._categories = new_categories
         else:
             values = cat.__array__()
             cat._codes = _get_codes_for_values(values, new_categories)
-            cat._categories = new_categories
+        cat._categories = new_categories
 
         if ordered is None:
             ordered = self.ordered
@@ -706,9 +737,8 @@ class Categorical(PandasObject):
             msg = "new categories must not include old categories: %s" % str(already_included)
             raise ValueError(msg)
         new_categories = list(self._categories) + list(new_categories)
-        new_categories = self._validate_categories(new_categories)
         cat = self if inplace else self.copy()
-        cat._categories = new_categories
+        cat._categories = self._validate_categories(new_categories)
         cat._codes = _coerce_indexer_dtype(cat._codes, new_categories)
         if not inplace:
             return cat

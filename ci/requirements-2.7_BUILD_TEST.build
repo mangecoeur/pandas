@@ -2,4 +2,3 @@ dateutil
 pytz
 numpy
 cython
-nose
